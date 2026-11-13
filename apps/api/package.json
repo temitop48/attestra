@@ -1,0 +1,32 @@
+{
+  "name": "@attestra/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/dev-server.ts",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit"
+  },
+  "dependencies": {
+    "@attestra/agents": "workspace:*",
+    "@attestra/near-readonly": "workspace:*",
+    "@attestra/orchestrator": "workspace:*",
+    "@attestra/shared": "workspace:*",
+    "@attestra/verification": "workspace:*",
+    "fastify": "^5.2.1",
+    "near-api-js": "^5.1.1",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.3"
+  }
+}

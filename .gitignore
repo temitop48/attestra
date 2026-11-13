@@ -1,0 +1,32 @@
+node_modules/
+.next/
+.next-*/
+dist/
+build/
+coverage/
+target/
+*.tsbuildinfo
+.turbo/
+.data/
+**/.data/
+*.tar.gz
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.crt
+credentials/
+secrets/
+**/.near-credentials/
+*.log
+.DS_Store
+
+# Development lock files
+.next-dev.lock
+
+# Generated test artifacts
+**/test/*.test.js
+**/test/*.test.d.ts
+**/test/*.test.d.ts.map
