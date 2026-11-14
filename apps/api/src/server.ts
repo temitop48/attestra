@@ -40,8 +40,10 @@ let verifierSignerConfigurationError: string | undefined;
 try {
   verifierSigner = await createVerifierSignerFromEnvironment();
 } catch (error) {
+  if (process.env.NODE_ENV === "production") throw new Error("Verifier signer configuration is invalid");
   verifierSignerConfigurationError = error instanceof Error ? error.message : "Verifier signer configuration is invalid";
 }
+if (process.env.NODE_ENV === "production" && !verifierSigner) throw new Error("Verifier signer credential is required in production");
 const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
 const host = process.env.HOST ?? "0.0.0.0";
 const usePostgres = process.env.NODE_ENV === "production" || Boolean(process.env.DATABASE_URL?.match(/^postgres(?:ql)?:\/\//));

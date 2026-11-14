@@ -125,14 +125,14 @@ NEAR_NETWORK=testnet
 NEAR_RPC_URL=https://rpc.testnet.near.org
 NEAR_ESCROW_CONTRACT_ACCOUNT=escrow.attestra-owner.testnet
 NEAR_AUTHORIZED_VERIFIER_ACCOUNT_ID=verifier.attestra-owner.testnet
-NEAR_PROJECT_STORAGE_DEPOSIT_YOCTO=<reviewed value>
-NEAR_MILESTONE_STORAGE_DEPOSIT_YOCTO=<reviewed value>
+NEAR_PROJECT_STORAGE_DEPOSIT_YOCTO=3000000000000000000000
+NEAR_MILESTONE_STORAGE_DEPOSIT_YOCTO=5000000000000000000000
 NEAR_VERIFICATION_STORAGE_DEPOSIT_YOCTO=0
-NEAR_APPROVAL_STORAGE_DEPOSIT_YOCTO=<reviewed value>
-NEAR_SETTLEMENT_STORAGE_DEPOSIT_YOCTO=<reviewed value>
+NEAR_APPROVAL_STORAGE_DEPOSIT_YOCTO=330000000000000000000
+NEAR_SETTLEMENT_STORAGE_DEPOSIT_YOCTO=640000000000000000000
 
 ATTESTRA_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
-ATTESTRA_LLM_MODEL=<operator-verified Gemini model>
+ATTESTRA_LLM_MODEL=gemini-3.1-flash-lite
 ATTESTRA_LLM_TIMEOUT_MS=120000
 ATTESTRA_LLM_MAX_RETRIES=1
 ATTESTRA_DEMO_MODE=false
@@ -143,17 +143,21 @@ Secrets injected only into Render:
 
 ```text
 ATTESTRA_LLM_API_KEY=<Gemini secret>
-ATTESTRA_NEAR_SIGNER_CREDENTIAL_PATH=<restricted verifier credential path or mounted secret reference>
+ATTESTRA_NEAR_SIGNER_CREDENTIAL_JSON=<one-line restricted near-api-js credential JSON>
 ATTESTRA_VERIFICATION_TOKEN=<optional operator-only token, if used>
 ```
 
-The verifier credential must be the restricted FunctionCall key for
+Set `ATTESTRA_NEAR_SIGNER_CREDENTIAL_JSON` as a protected Render secret to the
+complete server-side near-api-js credential JSON, including `account_id`,
+`public_key`, and `private_key`. Do not place it in a `NEXT_PUBLIC_` variable,
+frontend build argument, repository file, or log. The verifier credential must
+be the restricted FunctionCall key for
 `verifier.attestra-owner.testnet`, receiver `escrow.attestra-owner.testnet`,
-method list exactly `submit_verification`, and zero attached deposit. Production
+method list exactly `submit_verification`, a finite allowance, and zero attached deposit. Production
 startup/reconciliation must reject FullAccess verifier credentials. Do not put
-the credential in Vercel. If Render cannot mount a mode-0600 secret file,
-configure the existing server-side secret-reference mechanism supported by the
-repository; never paste a private key into a public or frontend variable.
+the credential in Vercel. Render Free needs no persistent disk for this secret.
+Local development may continue using the protected
+`ATTESTRA_NEAR_SIGNER_CREDENTIAL_FILE` path.
 
 ## Vercel Hobby frontend configuration
 

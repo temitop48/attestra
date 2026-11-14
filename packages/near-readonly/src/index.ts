@@ -22,6 +22,7 @@ export type NearAccessKey = {
   permission: "FullAccess" | "FunctionCall" | "Unknown";
   receiverId?: string;
   methodNames?: string[];
+  allowance?: string;
 };
 export type NearTransactionAction = { methodName?: string; argsBase64?: string; deposit?: string; type: "FunctionCall" | "Transfer" | "Unknown" };
 export type NearTransaction = { hash: string; signerId: string; receiverId: string; actions: NearTransactionAction[]; finalExecutionStatus: string; status: unknown; success: boolean; blockHash?: string };
@@ -72,7 +73,8 @@ export class NearReadonlyAdapter {
       const permission = wrapped.FunctionCall === undefined ? wrapped : object(wrapped.FunctionCall, "Invalid FunctionCall access key permission");
       const receiverId = typeof permission.receiver_id === "string" ? permission.receiver_id : undefined;
       const methodNames = Array.isArray(permission.method_names) && permission.method_names.every((item) => typeof item === "string") ? permission.method_names as string[] : undefined;
-      return { accountId, publicKey, permission: "FunctionCall", receiverId, methodNames };
+      const allowance = typeof permission.allowance === "string" ? permission.allowance : undefined;
+      return { accountId, publicKey, permission: "FunctionCall", receiverId, methodNames, allowance };
     }
     return { accountId, publicKey, permission: "Unknown" };
   }
