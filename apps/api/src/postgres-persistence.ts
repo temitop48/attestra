@@ -8,9 +8,13 @@ const MAX_RECORDS = 1_000;
 const txFields = ["fundingTransactionHash", "activationTransactionHash", "startTransactionHash", "verificationTransactionHash", "approvalTransactionHash", "settlementTransactionHash"] as const;
 type TxField = typeof txFields[number];
 
-function databaseSsl(env: NodeJS.ProcessEnv): { rejectUnauthorized: boolean } | undefined {
+export function databaseSsl(env: NodeJS.ProcessEnv): { rejectUnauthorized: boolean; ca?: string } | undefined {
   if (env.DATABASE_SSL !== "true") return undefined;
-  return { rejectUnauthorized: env.DATABASE_SSL_REJECT_UNAUTHORIZED !== "false" };
+  const ca = env.DATABASE_SSL_CA?.replace(/\\n/g, "\n").trim();
+  return {
+    rejectUnauthorized: env.DATABASE_SSL_REJECT_UNAUTHORIZED !== "false",
+    ...(ca ? { ca } : {})
+  };
 }
 
 export class PostgresExecutionStore implements ExecutionStoreLike {

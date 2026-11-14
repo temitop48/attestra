@@ -1,8 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { createPostgresPersistence } from "../src/postgres-persistence.js";
+import { createPostgresPersistence, databaseSsl } from "../src/postgres-persistence.js";
 
 describe("PostgreSQL production persistence", () => {
+  it("uses verified TLS by default and supports a server-side CA certificate", () => {
+    const ssl = databaseSsl({ DATABASE_SSL: "true", DATABASE_SSL_CA: "-----BEGIN CERTIFICATE-----\\nexample\\n-----END CERTIFICATE-----" });
+    expect(ssl).toEqual({
+      rejectUnauthorized: true,
+      ca: "-----BEGIN CERTIFICATE-----\nexample\n-----END CERTIFICATE-----"
+    });
+  });
+
+  it("does not enable PostgreSQL TLS unless explicitly configured", () => {
+    expect(databaseSsl({ DATABASE_SSL: "false", DATABASE_SSL_CA: "not-used" })).toBeUndefined();
+  });
+
   it("rejects JSON paths instead of silently falling back in production", async () => {
     await expect(createPostgresPersistence({ DATABASE_URL: ".data/executions.json" })).rejects.toThrow("PostgreSQL connection string");
   });

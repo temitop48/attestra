@@ -77,11 +77,16 @@ startup terminates the API rather than switching to temporary storage.
 4. Confirm both tables exist before starting Render. The API expects the
    migration to have been applied; it does not silently create a partial schema
    at runtime.
-5. For a Supabase certificate/connection setup that requires it, set
-   `DATABASE_SSL=true`. Prefer certificate verification. Only use
-   `DATABASE_SSL_REJECT_UNAUTHORIZED=false` if the selected Supabase connection
-   method requires it and the operator has accepted that platform-specific TLS
-   limitation.
+5. Set `DATABASE_SSL=true` and keep `DATABASE_SSL_REJECT_UNAUTHORIZED=true`.
+   If the Session Pooler presents a chain that Node does not trust by default,
+   obtain the current Supabase CA certificate from the Supabase connection
+   details/documentation and add it to Render as the protected server-side
+   secret `DATABASE_SSL_CA`. The API passes this CA to `pg` while retaining
+   hostname and certificate verification. A PEM value may be entered as a
+   multiline Render secret or with literal `\\n` line breaks. Never commit the
+   certificate or place it in a `NEXT_PUBLIC_` variable. Do not set
+   `DATABASE_SSL_REJECT_UNAUTHORIZED=false`; that disables certificate
+   verification and is not required when the correct Supabase CA is supplied.
 
 The JSON files are not automatically imported. If the historical local records
 are needed in the public instance, perform a separately reviewed, one-time
@@ -145,6 +150,7 @@ Secrets injected only into Render:
 ATTESTRA_LLM_API_KEY=<Gemini secret>
 ATTESTRA_NEAR_SIGNER_CREDENTIAL_JSON=<one-line restricted near-api-js credential JSON>
 ATTESTRA_VERIFICATION_TOKEN=<optional operator-only token, if used>
+DATABASE_SSL_CA=<current Supabase CA PEM certificate, if required by the pooler>
 ```
 
 Set `ATTESTRA_NEAR_SIGNER_CREDENTIAL_JSON` as a protected Render secret to the
