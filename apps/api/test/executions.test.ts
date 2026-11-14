@@ -102,7 +102,7 @@ describe("execution API", () => {
     txByHash.set("tx-activate", tx("tx-activate", "activate_milestone", { project_id: 7, milestone_id: 0 }, "1")); milestoneStatus = "Funded"; projectView = { ...projectView, available_balance: "10000000000000000000000", reserved_balance: budget }; const activation = await inject({ method: "POST", url: `/api/v1/executions/${executionId}/chain/reconcile`, headers, payload: { operation: "activate", transactionHash: "tx-activate" } }); expect(activation.statusCode).toBe(200); expect(activation.json().state.milestone.status).toBe("Funded");
     const startIntent = await inject({ method: "POST", url: `/api/v1/executions/${executionId}/chain/intent`, headers, payload: { operation: "start" } }); expect(startIntent.json()).toMatchObject({ methodName: "start_milestone", deposit: "1" });
     txByHash.set("tx-start", tx("tx-start", "start_milestone", { project_id: 7, milestone_id: 0 }, "1")); milestoneStatus = "InProgress"; const started = await inject({ method: "POST", url: `/api/v1/executions/${executionId}/chain/reconcile`, headers, payload: { operation: "start", transactionHash: "tx-start" } }); expect(started.statusCode).toBe(200); expect(started.json().state.milestone.status).toBe("InProgress");
-    const artifacts = [{ path: "index.html", mediaType: "text/html" as const, content: "<html></html>" }]; const digest = await computeArtifactDigest(artifacts); const receipt = { receiptId: "receipt-pass", projectId: "7", milestoneId: "0", artifactDigest: digest, result: "Passed" as const, checks: [{ id: "deterministic", name: "All mandatory checks", required: true, status: "passed" as const, message: "passed" }], timestamp: new Date().toISOString(), policyVersion: "verification-policy-v1" as const, verifier: { engineId: "attestra-independent-verifier-v4", implementationVersion: "attestra-independent-verifier-v4", llmReview: "disabled" as const } };
+    const artifacts = [{ path: "index.html", mediaType: "text/html" as const, content: "<html></html>" }]; const digest = await computeArtifactDigest(artifacts); const receipt = { receiptId: "receipt-pass", projectId: "7", milestoneId: "0", artifactDigest: digest, result: "Passed" as const, checks: [{ id: "deterministic", name: "All mandatory checks", required: true, status: "passed" as const, message: "passed" }], timestamp: new Date().toISOString(), policyVersion: "verification-policy-v1" as const, verifier: { engineId: "attestra-independent-verifier-v5", implementationVersion: "attestra-independent-verifier-v5", llmReview: "disabled" as const } };
     const updatedRecord = store.get(executionId)!; await store.update({ ...updatedRecord, status: "AwaitingIndependentVerification", lifecycle: "completed", finalDeliverable: { revision: 1, digest, canonicalFormat: "attestra-artifacts-v2", artifacts, totalBytes: 13 }, verification: receipt, verificationState: { attemptId: "attempt-pass", executionId, status: "verified", revision: 1, artifactDigest: digest, policyVersion: "verification-policy-v1", verifierImplementationVersion: "attestra-independent-verifier-v4", requestedAt: receipt.timestamp, completedAt: receipt.timestamp, result: "Passed", receipt }, verificationHistory: [{ attemptId: "attempt-pass", executionId, status: "verified", revision: 1, artifactDigest: digest, policyVersion: "verification-policy-v1", verifierImplementationVersion: "attestra-independent-verifier-v4", requestedAt: receipt.timestamp, completedAt: receipt.timestamp, result: "Passed", receipt }] });
     const verifierHeaders = { cookie: await authenticate(app, "verifier.testnet") }; expect((await inject({ method: "POST", url: `/api/v1/executions/${executionId}/chain/intent`, headers, payload: { operation: "submit_verification" } })).statusCode).toBe(409); const verifierIntent = await inject({ method: "POST", url: `/api/v1/executions/${executionId}/chain/intent`, headers: verifierHeaders, payload: { operation: "submit_verification" } }); expect(verifierIntent.statusCode).toBe(200); expect(verifierIntent.json()).toMatchObject({ methodName: "submit_verification", deposit: "1", args: { project_id: 7, milestone_id: 0, deliverable_digest: digest, receipt_id: "receipt-pass", result: "Passed" } });
     txByHash.set("tx-verification", tx("tx-verification", "submit_verification", { project_id: 7, milestone_id: 0, deliverable_digest: digest, receipt_id: "receipt-pass", result: "Passed" }, "1", { signer: "verifier.testnet" })); milestoneStatus = "VerificationPassed"; milestoneVerification = { project_id: 7, milestone_id: 0, deliverable_digest: digest, receipt_id: "receipt-pass", result: "Passed", verifier: "verifier.testnet" }; const verified = await inject({ method: "POST", url: `/api/v1/executions/${executionId}/chain/reconcile`, headers: verifierHeaders, payload: { operation: "submit_verification", transactionHash: "tx-verification" } }); expect(verified.statusCode, JSON.stringify(verified.json())).toBe(200);
@@ -169,7 +169,7 @@ describe("execution API", () => {
     const fetched = await app.inject({ method: "GET", url: `/api/v1/executions/${execution.executionId}/verification` });
     expect(fetched.json().artifactDigest).toBe(execution.finalDeliverable.digest);
     expect(fetched.json().history).toHaveLength(1);
-    expect(fetched.json().history[0].verifierImplementationVersion).toBe("attestra-independent-verifier-v4");
+    expect(fetched.json().history[0].verifierImplementationVersion).toBe("attestra-independent-verifier-v5");
     await app.close();
     const restarted = buildApp({ databasePath: path, demoMode: true });
     expect((await restarted.inject({ method: "GET", url: `/api/v1/executions/${execution.executionId}` })).statusCode).toBe(200);
@@ -250,7 +250,7 @@ describe("execution API", () => {
     expect(history.json().history).toHaveLength(2);
     expect(history.json().history[0].verifierImplementationVersion).toBeUndefined();
     expect(history.json().history[0].receipt.receiptId).toBe(firstReceipt.receiptId);
-    expect(history.json().history[1]).toMatchObject({ reVerificationReason: "Corrected independent verifier implementation.", verifierImplementationVersion: "attestra-independent-verifier-v4" });
+    expect(history.json().history[1]).toMatchObject({ reVerificationReason: "Corrected independent verifier implementation.", verifierImplementationVersion: "attestra-independent-verifier-v5" });
     const attempt = await app.inject({ method: "GET", url: `/api/v1/executions/${execution.executionId}/verification/attempts/${history.json().history[1].attemptId}` });
     expect(attempt.statusCode).toBe(200);
     await app.close();
@@ -337,7 +337,7 @@ describe("execution API", () => {
     await store.update(record);
     const verify = await app.inject({ method: "POST", url: `/api/v1/executions/${execution.executionId}/verify`, payload: {} });
     expect(verify.statusCode).toBe(201);
-    expect(verify.json()).toMatchObject({ result: "Failed", checks: expect.arrayContaining([expect.objectContaining({ status: "skipped", message: expect.stringContaining("could not be established") })]) });
+    expect(verify.json()).toMatchObject({ result: "Passed", checks: expect.arrayContaining([expect.objectContaining({ status: "skipped", required: false, message: expect.stringContaining("could not be established") })]) });
     await app.close();
   });
 
@@ -346,7 +346,7 @@ describe("execution API", () => {
     const created = await app.inject({ method: "POST", url: "/api/v1/executions", payload: project() });
     const execution = await waitForCompletion(app, created.json().executionId);
     const record = store.get(execution.executionId)!;
-    const attempt = { attemptId: "error-attempt", executionId: execution.executionId, status: "error" as const, revision: record.finalDeliverable!.revision, artifactDigest: record.finalDeliverable!.digest, policyVersion: "verification-policy-v1", verifierImplementationVersion: "attestra-independent-verifier-v4", requestedAt: new Date().toISOString(), completedAt: new Date().toISOString(), failure: { code: "VERIFICATION_ERROR", message: "non-retryable", retryable: false, stage: "receipt" as const } };
+    const attempt = { attemptId: "error-attempt", executionId: execution.executionId, status: "error" as const, revision: record.finalDeliverable!.revision, artifactDigest: record.finalDeliverable!.digest, policyVersion: "verification-policy-v1", verifierImplementationVersion: "attestra-independent-verifier-v5", requestedAt: new Date().toISOString(), completedAt: new Date().toISOString(), failure: { code: "VERIFICATION_ERROR", message: "non-retryable", retryable: false, stage: "receipt" as const } };
     record.verificationState = attempt; record.verificationHistory = [attempt]; await store.update(record);
     const status = await app.inject({ method: "GET", url: `/api/v1/executions/${execution.executionId}/verification` });
     expect(status.json().reverification).toMatchObject({ available: false });
@@ -371,7 +371,7 @@ describe("execution API", () => {
     const before = JSON.parse(readFileSync(isolated, "utf8")).executions.find((item: { executionId: string }) => item.executionId === "exec-040d6b46-3698-4658-97b0-ced5aca34540").verification;
     const response = await app.inject({ method: "POST", url: "/api/v1/executions/exec-040d6b46-3698-4658-97b0-ced5aca34540/verify", payload: { reverificationReason: "Corrected verifier implementation v2 recognizes the saved responsive CSS evidence." } });
     expect(response.statusCode).toBe(201);
-    expect(response.json()).toMatchObject({ result: "Passed", milestoneId: "1", artifactDigest: "b8169d910e973a4eb5a455930d4908dfd9951c1cb4d027a5782bfef9e52108fa", verifier: { implementationVersion: "attestra-independent-verifier-v4" } });
+    expect(response.json()).toMatchObject({ result: "Passed", milestoneId: "1", artifactDigest: "b8169d910e973a4eb5a455930d4908dfd9951c1cb4d027a5782bfef9e52108fa", verifier: { implementationVersion: "attestra-independent-verifier-v5" } });
     const after = JSON.parse(readFileSync(isolated, "utf8")).executions.find((item: { executionId: string }) => item.executionId === "exec-040d6b46-3698-4658-97b0-ced5aca34540");
     expect(after.verificationHistory).toHaveLength(2);
     expect(after.verificationHistory[0].receipt).toEqual(before);

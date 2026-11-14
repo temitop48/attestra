@@ -106,6 +106,7 @@ describe("workspace presentation", () => {
     expect(verificationStatusLabel("not_requested")).toBe("Not requested");
     expect(renderToStaticMarkup(<VerificationPanel execution={eligible} />)).toContain("Request independent verification");
     expect(renderToStaticMarkup(<VerificationReceiptView receipt={{ receiptId: "r1", projectId: "1", milestoneId: "1", artifactDigest: "a".repeat(64), result: "Passed", checks: [], timestamp: "2026-01-01", policyVersion: "verification-policy-v1", verifier: { engineId: "test", llmReview: "disabled" } }} />)).toContain("Verified");
+    expect(renderToStaticMarkup(<VerificationReceiptView receipt={{ receiptId: "r2", projectId: "1", milestoneId: "1", artifactDigest: "a".repeat(64), result: "Failed", checks: [{ id: "required_sections", name: "Required landing-page sections", required: true, status: "failed", message: "Every required section must be represented in HTML" }], timestamp: "2026-01-01", policyVersion: "verification-policy-v1", verifier: { engineId: "test", llmReview: "disabled" }, failure: { code: "DETERMINISTIC_CHECK_FAILED", message: "Mandatory deterministic checks failed: required_sections", retryable: false, stage: "deterministic" } }} />)).toContain("required_sections");
   });
 
   it("renders legacy verifier versions as unknown and exposes history without posting", () => {

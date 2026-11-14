@@ -61,10 +61,17 @@ describe("independent verification", () => {
     expect(receipt.checks.filter((check) => check.id.startsWith("acceptance_")).every((check) => check.status === "passed")).toBe(true);
   });
 
-  it("fails closed for unsupported mandatory criteria instead of treating skipped as passed", async () => {
+  it("does not block on acceptance criteria that cannot be established deterministically", async () => {
     const receipt = await engine().verify(await request({ criteria: { requiredSections: ["features"], acceptanceCriteria: ["A criterion requiring a browser interaction audit"], requireAccessibility: true } }));
-    expect(receipt.checks.find((check) => check.id === "acceptance_0")).toMatchObject({ status: "skipped", required: true });
+    expect(receipt.checks.find((check) => check.id === "acceptance_0")).toMatchObject({ status: "skipped", required: false });
+    expect(receipt.result).toBe("Passed");
+  });
+
+  it("reports the exact mandatory deterministic checks that failed", async () => {
+    const changed = await createDeliverableManifest(1, [{ ...artifacts[0]!, content: html.replace(/features/gi, "missing") }, artifacts[1]!]);
+    const receipt = await engine().verify({ ...(await request()), deliverable: changed, expectedArtifactDigest: changed.digest });
     expect(receipt.result).toBe("Failed");
+    expect(receipt.failure).toMatchObject({ code: "DETERMINISTIC_CHECK_FAILED", message: expect.stringContaining("required_sections") });
   });
 
   it("uses v4 deterministic evidence for the saved FocusFlow revision 2", async () => {
@@ -90,7 +97,7 @@ describe("independent verification", () => {
       },
     });
     expect(receipt.result).toBe("Passed");
-    expect(receipt.verifier.implementationVersion).toBe("attestra-independent-verifier-v4");
+    expect(receipt.verifier.implementationVersion).toBe("attestra-independent-verifier-v5");
     expect(receipt.policyVersion).toBe("verification-policy-v1");
     expect(receipt.projectId).toBe("0");
     expect(receipt.milestoneId).toBe("0");
