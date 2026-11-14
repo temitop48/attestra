@@ -42,6 +42,18 @@ describe("execution timeline", () => {
 });
 
 describe("workspace presentation", () => {
+  it("keeps the temporary escrow setup owner-only and fixed to the reviewed plan", () => {
+    const source = readFileSync(new URL("../src/components/chain-setup-panel.tsx", import.meta.url), "utf8");
+    expect(source).toContain('OWNER_ACCOUNT = "lateram9099.testnet"');
+    expect(source).toContain('RECIPIENT_ACCOUNT = "vitalurial616.testnet"');
+    expect(source).toContain('PROJECT_STORAGE_DEPOSIT = "3000000000000000000000"');
+    expect(source).toContain('MILESTONE_STORAGE_DEPOSIT = "5000000000000000000000"');
+    expect(source).toContain("wallet.authState === \"authenticated\"");
+    expect(source).toContain("confirmTransaction");
+    expect(source).toContain("recordProjectTransaction");
+    expect(source).toContain("recordMilestoneTransaction");
+  });
+
   it("uses one explicit wallet authentication state model", () => {
     expect(walletStatusLabel("disconnected")).toBe("Not connected");
     expect(walletStatusLabel("connected")).toContain("authentication required");
