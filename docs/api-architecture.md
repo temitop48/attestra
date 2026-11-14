@@ -42,6 +42,7 @@ For local pre-chain use, the endpoint maps decimal stored `projectId` and reques
 - Pagination is bounded to 50 records.
 - A basic process-local rate limit allows 60 requests per source IP per minute.
 - CORS allows only `FRONTEND_ORIGIN` (default `http://localhost:3000`).
+- Execution list, detail, events, artifacts, chain, and verification reads require the authenticated wallet that owns the execution. An explicitly configured server-only `ATTESTRA_EXECUTION_READ_TOKEN`, sent as `x-attestra-execution-read-token`, grants read-only operator debugging access; it is separate from the verification-write token.
 - Error responses contain bounded codes and messages and never include credentials.
 - The API does not expose provider API keys or private keys.
 - Generated JavaScript is never executed and no unrestricted filesystem write is exposed.
@@ -60,4 +61,4 @@ The API listens on `API_PORT` (default 4000). `pnpm test` exercises deterministi
 
 ## Limitations
 
-This MVP has no distributed queue, authentication, durable job lease, database transactions, or multi-process coordination. A process can lose in-flight work between writes, and external LLM calls can fail or time out. No on-chain payment, verification submission, wallet, or Testnet integration is included in Phase 3A.
+This MVP has no distributed queue, durable job lease, database transactions, or multi-process coordination. A process can lose in-flight work between writes, and external LLM calls can fail or time out. Production must configure `ATTESTRA_EXECUTION_READ_TOKEN` for authorized operational inspection; it must never be exposed to the browser.

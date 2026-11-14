@@ -28,6 +28,7 @@ export type DeterministicValidationInput = {
 
 type HtmlElement = { tag: string; attrs: Record<string, string>; content: string; text: string };
 type CssRule = { selector: string; declarations: Record<string, string> };
+type HtmlNode = { tag: string; attrs: Record<string, string>; parent?: HtmlNode; children: HtmlNode[] };
 
 const sectionAliases: Record<string, string[]> = {
   hero: ["hero", "banner", "masthead"],
@@ -96,8 +97,65 @@ function requiredCardCount(requirement: string): { count: number; label: string 
   return Number.isSafeInteger(count) && count > 0 && count <= 32 ? { count, label } : undefined;
 }
 
+function htmlTree(html: string): HtmlNode[] {
+  const roots: HtmlNode[] = [];
+  const stack: HtmlNode[] = [];
+  const voidTags = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+  for (const match of html.matchAll(/<!--[\s\S]*?-->|<\/\s*([a-z0-9]+)\s*>|<\s*([a-z0-9]+)\b([^>]*)>/gi)) {
+    const closingTag = match[1]?.toLowerCase();
+    if (closingTag) {
+      const index = [...stack].reverse().findIndex((node) => node.tag === closingTag);
+      if (index >= 0) stack.splice(stack.length - 1 - index);
+      continue;
+    }
+    const tag = match[2]?.toLowerCase();
+    if (!tag) continue;
+    const node: HtmlNode = { tag, attrs: attrMap(match[3] ?? ""), children: [] };
+    const parent = stack.at(-1);
+    if (parent) { node.parent = parent; parent.children.push(node); } else roots.push(node);
+    if (!voidTags.has(tag) && !/\/\s*$/.test(match[3] ?? "")) stack.push(node);
+  }
+  return roots;
+}
+
+function nodeIdentity(node: HtmlNode): string {
+  return normalized([node.attrs.id, node.attrs.class, node.attrs["data-section"], node.attrs["aria-label"]].filter(Boolean).join(" "));
+}
+
+function hasFeatureContainerAncestor(node: HtmlNode): boolean {
+  let current = node.parent;
+  while (current) {
+    const identity = nodeIdentity(current);
+    if (identityMatchesAlias(identity, "features") || identity.includes("feature grid") || identity.includes("feature cards")) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function featureCardCount(html: string): number {
+  const nodes: HtmlNode[] = [];
+  const visit = (node: HtmlNode) => { nodes.push(node); node.children.forEach(visit); };
+  htmlTree(html).forEach(visit);
+  const candidates = nodes.filter((node) => {
+    const identity = nodeIdentity(node);
+    const classes = (node.attrs.class ?? "").split(/\s+/).map(normalized).filter(Boolean);
+    const explicitFeatureCard = classes.some((item) => ["feature card", "featurecard", "feature item"].includes(item)) || identityMatchesAlias(node.attrs["data-card"] ?? "", "feature");
+    const genericCardInFeatureContainer = classes.includes("card") && hasFeatureContainerAncestor(node);
+    const semanticCardInFeatureContainer = node.tag === "article" && hasFeatureContainerAncestor(node) && !identity.includes("feature grid");
+    return explicitFeatureCard || genericCardInFeatureContainer || semanticCardInFeatureContainer;
+  });
+  return candidates.filter((candidate) => !candidates.some((other) => other !== candidate && isAncestor(other, candidate))).length;
+}
+
+function isAncestor(ancestor: HtmlNode, node: HtmlNode): boolean {
+  let current = node.parent;
+  while (current) { if (current === ancestor) return true; current = current.parent; }
+  return false;
+}
+
 function countMatchingCards(html: string, label: string): number {
   const wanted = normalized(label);
+  if (wanted === "feature" || wanted === "features") return featureCardCount(html);
   let count = 0;
   for (const match of html.matchAll(/<([a-z0-9]+)\b([^>]*)>/gi)) {
     const attrs = attrMap(match[2] ?? "");
@@ -178,8 +236,8 @@ function formChecks(html: string): DeterministicValidationRule[] {
     return !hasLabel && !input.attrs["aria-label"]?.trim() && !input.attrs["aria-labelledby"]?.trim() && !input.attrs.title?.trim();
   });
   const submitControls = [
-    ...elements(html, "button"),
-    ...inputs.filter((input) => ["submit", "button", "image"].includes((input.attrs.type ?? "submit").toLowerCase())),
+    ...elements(html, "button").filter((button) => ["", "submit"].includes((button.attrs.type ?? "").toLowerCase())),
+    ...inputs.filter((input) => ["submit", "button", "image"].includes((input.attrs.type ?? "").toLowerCase())),
   ];
   const unnamedSubmit = submitControls.filter((control) => !accessibleName(control, html));
   const unnamedLinks = elements(html, "a").filter((link) => !accessibleName(link, html));

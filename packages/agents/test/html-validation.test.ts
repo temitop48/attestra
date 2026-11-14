@@ -14,11 +14,57 @@ function report(artifacts: Artifact[] = validArtifacts) {
   return validateHtmlCssDeliverable({ artifacts, requiredSections, acceptanceRequirements: ["responsive CSS", "accessible HTML"] });
 }
 
+function formReport(markup: string) {
+  return validateHtmlCssDeliverable({ artifacts: [{ path: "index.html", mediaType: "text/html", content: `<!doctype html><html lang="en"><head><title>Forms</title></head><body>${markup}</body></html>` }], requiredSections: [] });
+}
+
 describe("deterministic HTML/CSS validation", () => {
+  it("does not classify inputs without type or with type=text as submit controls", () => {
+    const result = formReport(`<form><input id="implicit-text"><input id="explicit-text" type="text"></form>`);
+    expect(result.rules.find((item) => item.id === "submit_control_names")?.outcome).toBe("pass");
+    expect(result.rules.find((item) => item.id === "form_control_names")?.outcome).toBe("fail");
+  });
+
+  it("recognizes explicit input submit controls and default or explicit submit buttons", () => {
+    const result = formReport(`<form><input type="submit"><button type="submit"></button><button></button></form>`);
+    expect(result.rules.find((item) => item.id === "submit_control_names")?.outcome).toBe("fail");
+    expect(result.rules.find((item) => item.id === "submit_control_names")?.message).toContain("3 submit control(s)");
+  });
+
+  it("accepts named submit controls while excluding non-submit button types", () => {
+    const result = formReport(`<form><input type="submit" aria-label="Save"><button type="submit">Save</button><button>Continue</button><button type="button">Open</button><button type="reset">Reset</button></form>`);
+    expect(result.rules.find((item) => item.id === "submit_control_names")?.outcome).toBe("pass");
+  });
+
   it("accepts a semantic landing page with three feature cards and a CTA", () => {
     const html = `<!doctype html><html lang="en"><head><title>TaskFlow</title><link rel="stylesheet" href="styles.css"></head><body><header id="hero"><h1>TaskFlow</h1></header><main><section class="feature-cards" aria-label="Features"><article class="feature-card"><h2>Plan</h2></article><article class="feature-card"><h2>Track</h2></article><article class="feature-card"><h2>Ship</h2></article></section><section id="cta-section"><h2>Get started</h2><a href="#hero">Start TaskFlow</a></section></main></body></html>`;
     const result = validateHtmlCssDeliverable({ artifacts: [{ path: "index.html", mediaType: "text/html", content: html }, { path: "styles.css", mediaType: "text/css", content: ".feature-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }" }], requiredSections: ["Hero", "Feature Cards", "CTA"], acceptanceRequirements: ["three feature cards"] });
     expect(result.summary.blockingFailures).toBe(0);
+    expect(result.rules.find((item) => item.id === "required_count_feature_cards")?.outcome).toBe("pass");
+  });
+
+  it("reproduces the production builder structure with a feature grid and three cards", () => {
+    const html = `<!doctype html><html lang="en"><body><section id="hero"><h1>TaskFlow</h1></section><section class="feature-grid"><article class="card"><h2>Plan</h2></article><article class="card"><h2>Track</h2></article><article class="card"><h2>Ship</h2></article></section><section id="cta-section"><a href="#hero">Start</a></section></body></html>`;
+    const result = formReport(html);
+    expect(validateHtmlCssDeliverable({ artifacts: [{ path: "index.html", mediaType: "text/html", content: html }], requiredSections: ["hero", "features", "cta"], acceptanceRequirements: ["three feature cards"] }).rules.find((item) => item.id === "required_count_feature_cards")?.outcome).toBe("pass");
+    expect(result.rules.find((item) => item.id === "required_count_feature_cards")).toBeUndefined();
+  });
+
+  it("fails when a feature container has fewer than three cards", () => {
+    const html = `<section class="feature-grid"><article class="card">One</article><article class="card">Two</article></section>`;
+    const result = validateHtmlCssDeliverable({ artifacts: [{ path: "index.html", mediaType: "text/html", content: html }], requiredSections: [], acceptanceRequirements: ["three feature cards"] });
+    expect(result.rules.find((item) => item.id === "required_count_feature_cards")?.outcome).toBe("fail");
+  });
+
+  it("does not count generic cards outside the feature section", () => {
+    const html = `<div class="card">Pricing</div><section id="features"><article class="card">One</article><article class="card">Two</article><article class="card">Three</article></section>`;
+    const result = validateHtmlCssDeliverable({ artifacts: [{ path: "index.html", mediaType: "text/html", content: html }], requiredSections: [], acceptanceRequirements: ["three feature cards"] });
+    expect(result.rules.find((item) => item.id === "required_count_feature_cards")?.outcome).toBe("pass");
+  });
+
+  it("counts nested feature-card markup once and accepts semantic article cards", () => {
+    const html = `<section aria-label="Features"><article class="feature-card"><div class="feature-card"><h2>One</h2></div></article><article><h2>Two</h2></article><article><h2>Three</h2></article></section>`;
+    const result = validateHtmlCssDeliverable({ artifacts: [{ path: "index.html", mediaType: "text/html", content: html }], requiredSections: [], acceptanceRequirements: ["three feature cards"] });
     expect(result.rules.find((item) => item.id === "required_count_feature_cards")?.outcome).toBe("pass");
   });
 

@@ -23,6 +23,28 @@ async function authenticate(app: Awaited<ReturnType<typeof buildApp>>, accountId
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { recursive: true, force: true }); });
 
 describe("execution API", () => {
+  it("protects execution reads, preserves owner access, and supports a separate operator read token", async () => {
+    const adapter = new NearReadonlyAdapter({ contractAccountId: "escrow.testnet", fetcher: async (_url, request) => request.method === "query" && (request.params as Record<string, unknown>).request_type === "view_access_key" ? { result: { permission: "FullAccess" } } : { result: { chain_id: "testnet" } } });
+    const store = ExecutionStore.openSync(databasePath());
+    const app = buildApp({ store, nearAdapter: adapter, demoMode: true, executionReadToken: "operator-read-token", allowLocalExecutionReads: false });
+    try {
+      const ownerCookie = (await authenticate(app, "owner.testnet")).split(";", 1)[0]!;
+      const created = await app.inject({ method: "POST", url: "/api/v1/executions", headers: { cookie: ownerCookie }, payload: project() });
+      const executionId = created.json().executionId as string;
+      expect((await app.inject({ method: "GET", url: "/api/v1/executions" })).statusCode).toBe(401);
+      expect((await app.inject({ method: "GET", url: `/api/v1/executions/${executionId}` })).statusCode).toBe(401);
+      expect((await app.inject({ method: "GET", url: "/api/v1/executions", headers: { cookie: ownerCookie } })).statusCode).toBe(200);
+      expect((await app.inject({ method: "GET", url: `/api/v1/executions/${executionId}`, headers: { cookie: ownerCookie } })).statusCode).toBe(200);
+      const intruderCookie = (await authenticate(app, "intruder.testnet")).split(";", 1)[0]!;
+      expect((await app.inject({ method: "GET", url: `/api/v1/executions/${executionId}`, headers: { cookie: intruderCookie } })).statusCode).toBe(404);
+      expect((await app.inject({ method: "GET", url: `/api/v1/executions/${executionId}`, headers: { "x-attestra-execution-read-token": "wrong-token" } })).statusCode).toBe(401);
+      const operatorHeaders = { "x-attestra-execution-read-token": "operator-read-token" };
+      expect((await app.inject({ method: "GET", url: "/api/v1/executions", headers: operatorHeaders })).statusCode).toBe(200);
+      expect((await app.inject({ method: "GET", url: `/api/v1/executions/${executionId}/events`, headers: operatorHeaders }))).toMatchObject({ statusCode: 200 });
+      expect((await app.inject({ method: "GET", url: `/api/v1/executions/${executionId}/verification`, headers: operatorHeaders }))).toMatchObject({ statusCode: 200 });
+    } finally { await app.close(); }
+  });
+
   it("exposes read-only NEAR status and preserves unlinked executions", async () => {
     const app = buildApp({ databasePath: databasePath(), demoMode: true });
     const status = await app.inject({ method: "GET", url: "/api/v1/near/status" });

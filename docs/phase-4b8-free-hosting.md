@@ -150,6 +150,7 @@ Secrets injected only into Render:
 ATTESTRA_LLM_API_KEY=<Gemini secret>
 ATTESTRA_NEAR_SIGNER_CREDENTIAL_JSON=<one-line restricted near-api-js credential JSON>
 ATTESTRA_VERIFICATION_TOKEN=<optional operator-only token, if used>
+ATTESTRA_EXECUTION_READ_TOKEN=<protected operator-only token for execution diagnostics>
 DATABASE_SSL_CA=<current Supabase CA PEM certificate, if required by the pooler>
 ```
 
