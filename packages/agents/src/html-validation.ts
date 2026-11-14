@@ -36,7 +36,10 @@ const sectionAliases: Record<string, string[]> = {
   testimonials: ["testimonials", "testimonial", "reviews", "trusted"],
   pricing: ["pricing", "plans", "price"],
   "call to action": ["call-to-action", "call to action", "cta", "signup", "sign-up", "get-started"],
+  cta: ["call-to-action", "call to action", "cta", "signup", "sign-up", "get-started"],
 };
+
+const numberWords: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 
 function attrMap(raw: string): Record<string, string> {
   const attrs: Record<string, string> = {};
@@ -82,6 +85,40 @@ function identityMatchesAlias(identity: string, alias: string): boolean {
   const value = normalized(identity);
   const candidate = normalized(alias);
   return Boolean(value && candidate && (value === candidate || ` ${value} `.includes(` ${candidate} `)));
+}
+
+function requiredCardCount(requirement: string): { count: number; label: string } | undefined {
+  const match = normalized(requirement).match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+([a-z][a-z ]*?)\s+cards?\b/);
+  if (!match) return undefined;
+  const parsed = Number(match[1]);
+  const count = Number.isNaN(parsed) ? (numberWords[match[1]!] ?? 0) : parsed;
+  const label = match[2]!.trim();
+  return Number.isSafeInteger(count) && count > 0 && count <= 32 ? { count, label } : undefined;
+}
+
+function countMatchingCards(html: string, label: string): number {
+  const wanted = normalized(label);
+  let count = 0;
+  for (const match of html.matchAll(/<([a-z0-9]+)\b([^>]*)>/gi)) {
+    const attrs = attrMap(match[2] ?? "");
+    const identity = [attrs.id, attrs.class, attrs["data-section"], attrs["aria-label"]].filter(Boolean).join(" ");
+    const value = normalized(identity);
+    if (value.includes("card") && !value.includes("cards") && (value.includes(wanted) || (wanted.endsWith("s") && value.includes(wanted.slice(0, -1))))) count += 1;
+  }
+  return count;
+}
+
+export function hasRequiredCardQuantity(html: string, requirement: string): boolean | undefined {
+  const requested = requiredCardCount(requirement);
+  return requested ? countMatchingCards(html, requested.label) >= requested.count : undefined;
+}
+
+function quantityRule(requirement: string, html: string): DeterministicValidationRule | undefined {
+  const requested = requiredCardCount(requirement);
+  if (!requested) return undefined;
+  const actual = countMatchingCards(html, requested.label);
+  const label = normalized(`${requested.label} cards`);
+  return rule(`required_count_${label.replace(/[^a-z0-9]+/g, "_")}`, actual >= requested.count ? "pass" : "fail", "high", actual < requested.count, actual >= requested.count ? `Required quantity met: ${actual} ${label}` : `Required quantity not met: found ${actual} ${label}, require ${requested.count}`, `Requirement: ${requirement}; detected: ${actual}`, "index.html");
 }
 
 function findArtifact(artifacts: readonly Artifact[], path: string): Artifact | undefined {
@@ -255,6 +292,11 @@ export function validateHtmlCssDeliverable(input: DeterministicValidationInput):
   for (const section of requiredSections) {
     const present = hasRequiredSection(html, section);
     rules.push(rule(`required_section_${normalized(section).replace(/[^a-z0-9]+/g, "_")}`, present === true ? "pass" : present === false ? "fail" : "unknown", "high", present === false, present === true ? `Required section '${section}' was found` : `Required section '${section}' was not found`, `Requirement: ${section}`, "index.html"));
+  }
+
+  for (const requirement of [...new Set([...requiredSections, ...acceptanceRequirements])]) {
+    const quantity = quantityRule(requirement, html);
+    if (quantity) rules.push(quantity);
   }
 
   const fragment = linksHaveTargets(html);

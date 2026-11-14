@@ -25,6 +25,7 @@ describe("agent catalog", () => {
 const researchJson = JSON.stringify({
   summary: "A focused product landing page for an engineering audience.",
   sections: ["hero", "workflow", "proof"],
+  acceptanceCriteria: ["hero", "workflow", "proof"],
   designRequirements: ["Clear hierarchy", "High contrast"],
   implementationRequirements: ["Responsive HTML", "No external secrets"],
   ambiguities: [],
@@ -43,10 +44,12 @@ describe("agent execution", () => {
   it("publishes explicit schemas in each specialist prompt", () => {
     expect(agentDefinitions.research.systemPrompt).toContain('"summary": string non-empty');
     expect(agentDefinitions.research.systemPrompt).toContain('"implementationRequirements": string[]');
-    expect(agentDefinitions.research.systemPrompt).toContain("All five array properties are required");
+    expect(agentDefinitions.research.systemPrompt).toContain("All six array properties are required");
     expect(agentDefinitions.builder.systemPrompt).toContain('"artifacts": Artifact[]');
     expect(agentDefinitions.builder.systemPrompt).toContain('"mediaType": "text/html"|"text/css"|"text/javascript"');
     expect(agentDefinitions.builder.systemPrompt).toContain("preserve every previously satisfied ResearchSpec section");
+    expect(agentDefinitions.builder.systemPrompt).toContain("acceptanceCriteria");
+    expect(agentDefinitions.builder.systemPrompt).toContain("stable normalized id, class, data-section, or aria-label");
     expect(agentDefinitions.qa.systemPrompt).toContain('"passed": boolean');
     expect(agentDefinitions.qa.systemPrompt).toContain('"missingRequirements": string[]');
     expect(agentDefinitions.qa.systemPrompt).toContain("Visible descriptive button text is an accessible name");

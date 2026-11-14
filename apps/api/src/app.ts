@@ -95,7 +95,7 @@ function verificationCriteria(body: Record<string, unknown>): VerificationCriter
 function authoritativeVerificationCriteria(record: StoredExecution, body: Record<string, unknown>): VerificationCriteria {
   const savedSections = (record.research?.sections ?? []).filter((item): item is string => typeof item === "string" && item.trim().length > 0);
   if (savedSections.length === 0) throw new VerificationError("VERIFICATION_CRITERIA_NOT_SAVED", "No structured acceptance requirements are saved for this execution", false);
-  const savedRequirements = [...(record.research?.implementationRequirements ?? []), ...(record.constraints ?? [])].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  const savedRequirements = [...(record.research?.acceptanceCriteria ?? []), ...(record.research?.implementationRequirements ?? []), ...(record.constraints ?? [])].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
   const requested = body.criteria === undefined ? undefined : verificationCriteria(body);
   const unique = (items: string[]) => [...new Set(items.map((item) => item.trim()).filter(Boolean))];
   return { requiredSections: unique([...savedSections, ...(requested?.requiredSections ?? [])]), acceptanceCriteria: unique([...savedRequirements, ...(requested?.acceptanceCriteria ?? [])]), requireAccessibility: true };

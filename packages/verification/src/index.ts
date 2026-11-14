@@ -1,4 +1,4 @@
-import { artifactByteLength, ARTIFACT_LIMITS, hasRequiredSection, hasResponsiveCssEvidence, isSafeArtifactPath, type Artifact, type LlmProvider } from "@attestra/agents";
+import { artifactByteLength, ARTIFACT_LIMITS, hasRequiredCardQuantity, hasRequiredSection, hasResponsiveCssEvidence, isSafeArtifactPath, type Artifact, type LlmProvider } from "@attestra/agents";
 import { computeArtifactDigest, type DeliverableManifest } from "@attestra/orchestrator";
 
 export type VerificationStatus = "pending" | "approved" | "rejected";
@@ -101,6 +101,8 @@ function acceptanceCovered(criterion: string, html: string, css: string, javascr
   if (/eval|dynamic code execution/i.test(normalized)) return containsDynamicCode(`${html}\n${css}\n${javascript}`) ? "failed" : "passed";
   if (/static html|static css|html and css/i.test(normalized)) return /<html\b/i.test(html) && Boolean(css.trim()) ? "passed" : "failed";
   if (/call to action|\bcta\b/i.test(normalized)) return hasRequiredSection(html, "Call to Action") === true ? "passed" : "failed";
+  const requiredCards = hasRequiredCardQuantity(html, criterion);
+  if (requiredCards !== undefined) return requiredCards ? "passed" : "failed";
   if (/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(normalized)) return text.includes(normalized) ? "passed" : "failed";
   return "unknown";
 }

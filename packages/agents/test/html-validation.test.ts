@@ -15,6 +15,27 @@ function report(artifacts: Artifact[] = validArtifacts) {
 }
 
 describe("deterministic HTML/CSS validation", () => {
+  it("accepts a semantic landing page with three feature cards and a CTA", () => {
+    const html = `<!doctype html><html lang="en"><head><title>TaskFlow</title><link rel="stylesheet" href="styles.css"></head><body><header id="hero"><h1>TaskFlow</h1></header><main><section class="feature-cards" aria-label="Features"><article class="feature-card"><h2>Plan</h2></article><article class="feature-card"><h2>Track</h2></article><article class="feature-card"><h2>Ship</h2></article></section><section id="cta-section"><h2>Get started</h2><a href="#hero">Start TaskFlow</a></section></main></body></html>`;
+    const result = validateHtmlCssDeliverable({ artifacts: [{ path: "index.html", mediaType: "text/html", content: html }, { path: "styles.css", mediaType: "text/css", content: ".feature-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }" }], requiredSections: ["Hero", "Feature Cards", "CTA"], acceptanceRequirements: ["three feature cards"] });
+    expect(result.summary.blockingFailures).toBe(0);
+    expect(result.rules.find((item) => item.id === "required_count_feature_cards")?.outcome).toBe("pass");
+  });
+
+  it("recognizes alternative IDs and classes without relying on exact IDs", () => {
+    expect(hasRequiredSection(`<header class="masthead"></header>`, "Hero")).toBe(true);
+    expect(hasRequiredSection(`<section data-section="feature-cards"></section>`, "Features")).toBe(true);
+    expect(hasRequiredSection(`<aside aria-label="Call to Action"></aside>`, "CTA")).toBe(true);
+  });
+
+  it("fails missing sections and insufficient quantified cards", () => {
+    const html = `<html lang="en"><head><title>TaskFlow</title></head><body><section id="hero"><h1>TaskFlow</h1></section><section class="feature-cards"><article class="feature-card"></article><article class="feature-card"></article></section></body></html>`;
+    const result = validateHtmlCssDeliverable({ artifacts: [{ path: "index.html", mediaType: "text/html", content: html }, { path: "styles.css", mediaType: "text/css", content: "body{}" }], requiredSections: ["hero", "features", "cta-section"], acceptanceRequirements: ["three feature cards"] });
+    expect(result.rules.find((item) => item.id === "required_section_cta_section")?.outcome).toBe("fail");
+    expect(result.rules.find((item) => item.id === "required_count_feature_cards")?.outcome).toBe("fail");
+    expect(result.summary.blockingFailures).toBeGreaterThanOrEqual(2);
+  });
+
   it.each(["cta", "signup", "get-started"]) ("maps Call to Action to %s", (id) => {
     expect(hasRequiredSection(`<section id="${id}"><h2>Start now</h2></section>`, "Call to Action")).toBe(true);
   });

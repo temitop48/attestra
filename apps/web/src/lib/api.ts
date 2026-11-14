@@ -41,7 +41,7 @@ export type ExecutionRecord = ExecutionSummary & {
   assignedAgents: Array<{ assignmentId: string; agentKind: ExecutionStepKind; agentId: string; attempt: number; assignedAt: string }>;
   steps: ExecutionStep[];
   history: Array<{ sequence: number; type: string; occurredAt: string; status: ExecutionStatus; attempt?: number; agentKind?: ExecutionStepKind; metadata?: Record<string, string | number | boolean> }>;
-  research?: { summary: string; sections: string[]; designRequirements: string[]; implementationRequirements: string[]; ambiguities: string[]; risks: string[] };
+  research?: { summary: string; sections: string[]; acceptanceCriteria?: string[]; designRequirements: string[]; implementationRequirements: string[]; ambiguities: string[]; risks: string[] };
   revisions: Array<{ revision: number; digest: string; totalBytes: number }>;
   reworkRequests: Array<{ revision: number; rejectedRevision: number; nextBuilderAttempt?: number; terminal: boolean; findings: Array<{ severity: string; code: string; message: string; path?: string; recommendation: string }>; missingRequirements: string[]; recommendations: string[] }>;
   qaAssessments: Array<{ revision: number; digest: string; passed: boolean; findings: Array<{ severity: string; code: string; message: string; path?: string; recommendation: string }>; missingRequirements: string[]; recommendations: string[]; evaluatedAt: string }>;

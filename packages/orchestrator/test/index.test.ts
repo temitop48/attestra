@@ -20,6 +20,7 @@ import {
 const research: ResearchSpec = {
   summary: "A focused landing page for an engineering audience.",
   sections: ["hero", "workflow", "proof"],
+  acceptanceCriteria: ["hero", "workflow", "proof"],
   designRequirements: ["Clear hierarchy", "High contrast"],
   implementationRequirements: ["Responsive HTML", "No external secrets"],
   ambiguities: [],
@@ -165,6 +166,16 @@ describe("autonomous project execution", () => {
     expect(result.failure?.code).toBe("REWORK_EXHAUSTED");
     expect(result.qaAssessments[0]?.passed).toBe(false);
     expect(result.qaAssessments[0]?.findings.some((finding) => finding.code === "DETERMINISTIC_REQUIRED_SECTION_WORKFLOW")).toBe(true);
+  });
+
+  it("feeds deterministic failures into actionable rework context", async () => {
+    const incompleteBuilder = { ...builder, artifacts: [{ ...builder.artifacts[0]!, content: builder.artifacts[0]!.content.replace(/<section id="workflow">[\s\S]*?<\/section>/, "") }, builder.artifacts[1]!] };
+    const { value, providers } = orchestrator({ maxBuilderAttempts: 2, builderResponses: [JSON.stringify(incompleteBuilder), JSON.stringify(builder)], qaResponses: [passingQa, passingQa] });
+    const result = await value.execute(request({ maxBuilderAttempts: 2 }));
+    const secondRequest = JSON.parse(providers.builderProvider.requests[1]!.messages[1]!.content) as { input: { rework?: { unresolvedRequirements?: string[]; findings?: Array<{ code: string }> } } };
+    expect(result.status).toBe("AwaitingIndependentVerification");
+    expect(secondRequest.input.rework?.findings?.some((finding) => finding.code === "DETERMINISTIC_REQUIRED_SECTION_WORKFLOW")).toBe(true);
+    expect(secondRequest.input.rework?.unresolvedRequirements?.some((item) => item.includes("Required section 'workflow'"))).toBe(true);
   });
 
   it("keeps missing required sections blocking across revisions", async () => {

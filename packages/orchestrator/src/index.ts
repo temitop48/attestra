@@ -295,7 +295,7 @@ export class Orchestrator {
         const validation = validateHtmlCssDeliverable({
           artifacts: deliverable.artifacts,
           requiredSections: research.sections,
-          acceptanceRequirements: research.implementationRequirements,
+          acceptanceRequirements: [...research.acceptanceCriteria, ...research.implementationRequirements, request.requirements],
           research,
         });
         execution.validationReports.push({
@@ -534,6 +534,8 @@ function applyDeterministicPolicy(qa: QaOutput, report: DeterministicValidationR
     ...qa,
     passed: false,
     findings: [...qa.findings, ...deterministicFindings],
+    missingRequirements: [...new Set([...qa.missingRequirements, ...blockingFailures.map((item) => item.message)])],
+    recommendations: [...new Set([...qa.recommendations, ...blockingFailures.map((item) => item.evidence)])],
   };
 }
 

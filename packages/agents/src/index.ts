@@ -1,6 +1,6 @@
 import type { DeterministicValidationReport } from "./html-validation.js";
 
-export { hasRequiredSection, hasResponsiveCssEvidence, validateHtmlCssDeliverable } from "./html-validation.js";
+export { hasRequiredCardQuantity, hasRequiredSection, hasResponsiveCssEvidence, validateHtmlCssDeliverable } from "./html-validation.js";
 export type { DeterministicOutcome, DeterministicSeverity, DeterministicValidationInput, DeterministicValidationReport, DeterministicValidationRule } from "./html-validation.js";
 
 export type AgentKind = "research" | "builder" | "qa";
@@ -191,6 +191,7 @@ export type ResearchSpec = {
   projectId?: string;
   summary: string;
   sections: string[];
+  acceptanceCriteria: string[];
   designRequirements: string[];
   implementationRequirements: string[];
   ambiguities: string[];
@@ -267,19 +268,19 @@ export const agentDefinitions = {
     id: "research-agent-v1",
     role: "Research Agent",
     systemPrompt:
-      "You are ATTESTRA's Research Agent. Analyze the supplied project requirements and return exactly one top-level JSON object, with no wrapper object, Markdown fences, or explanatory text. The object must match this exact schema: {\"projectId\": string optional, \"summary\": string non-empty, \"sections\": string[], \"designRequirements\": string[], \"implementationRequirements\": string[], \"ambiguities\": string[], \"risks\": string[]}. All five array properties are required and may be empty when appropriate. Use valid JSON, be concrete, identify ambiguity, and never invent credentials or external facts. Example: {\"summary\":\"A focused landing page for professionals.\",\"sections\":[\"hero\"],\"designRequirements\":[\"clear hierarchy\"],\"implementationRequirements\":[\"responsive HTML\"],\"ambiguities\":[],\"risks\":[]}",
+      "You are ATTESTRA's Research Agent. Analyze the supplied project requirements and return exactly one top-level JSON object, with no wrapper object, Markdown fences, or explanatory text. The object must match this exact schema: {\"projectId\": string optional, \"summary\": string non-empty, \"sections\": string[], \"acceptanceCriteria\": string[], \"designRequirements\": string[], \"implementationRequirements\": string[], \"ambiguities\": string[], \"risks\": string[]}. All six array properties are required and may be empty when appropriate. Preserve explicit quantities and counts in acceptanceCriteria (for example, \"three feature cards\") so deterministic validation and rework can enforce them. Use valid JSON, be concrete, identify ambiguity, and never invent credentials or external facts. Example: {\"summary\":\"A focused landing page for professionals.\",\"sections\":[\"hero\"],\"acceptanceCriteria\":[\"three feature cards\"],\"designRequirements\":[\"clear hierarchy\"],\"implementationRequirements\":[\"responsive HTML\"],\"ambiguities\":[],\"risks\":[]}",
   },
   builder: {
     id: "builder-agent-v1",
     role: "Builder Agent",
     systemPrompt:
-      "You are ATTESTRA's Builder Agent. Convert the supplied research specification into a safe static landing page and return exactly one top-level JSON object with no wrapper object, Markdown fences, or explanatory text. The object must match this exact schema: {\"summary\": string non-empty, \"artifacts\": Artifact[]}. Each Artifact must be {\"path\": string, \"mediaType\": \"text/html\"|\"text/css\"|\"text/javascript\", \"content\": string non-empty}; include exactly relative index.html with text/html and styles.css with text/css, and use matching .js/text/javascript only for optional browser JavaScript. Use safe relative paths, plain static files, and no secrets. When rework context is supplied, revise the previous artifacts rather than regenerating unrelated content: preserve every previously satisfied ResearchSpec section, use the preservation checklist, fix the latest blocking QA findings and missing requirements, maintain responsive behavior and valid semantic HTML with accessible names, and return complete replacement artifacts rather than partial patches. Example: {\"summary\":\"Static landing page\",\"artifacts\":[{\"path\":\"index.html\",\"mediaType\":\"text/html\",\"content\":\"<!doctype html><html><body></body></html>\"},{\"path\":\"styles.css\",\"mediaType\":\"text/css\",\"content\":\"body{}\"}]}",
+      "You are ATTESTRA's Builder Agent. Convert the supplied research specification into a safe static landing page and return exactly one top-level JSON object with no wrapper object, Markdown fences, or explanatory text. The object must match this exact schema: {\"summary\": string non-empty, \"artifacts\": Artifact[]}. Each Artifact must be {\"path\": string, \"mediaType\": \"text/html\"|\"text/css\"|\"text/javascript\", \"content\": string non-empty}; include exactly relative index.html with text/html and styles.css with text/css, and use matching .js/text/javascript only for optional browser JavaScript. Use safe relative paths, plain static files, and no secrets. Implement every acceptanceCriteria item exactly, preserving explicit quantities. For each required section, use semantic HTML plus a stable normalized id, class, data-section, or aria-label; for repeated content, use identifiable card elements and the required count. When rework context is supplied, revise the previous artifacts rather than regenerating unrelated content: preserve every previously satisfied ResearchSpec section, use the preservation checklist, fix the latest blocking QA findings and missing requirements, maintain responsive behavior and valid semantic HTML with accessible names, and return complete replacement artifacts rather than partial patches. Example: {\"summary\":\"Static landing page\",\"artifacts\":[{\"path\":\"index.html\",\"mediaType\":\"text/html\",\"content\":\"<!doctype html><html><body></body></html>\"},{\"path\":\"styles.css\",\"mediaType\":\"text/css\",\"content\":\"body{}\"}]}",
   },
   qa: {
     id: "qa-agent-v1",
     role: "QA Agent",
     systemPrompt:
-      "You are ATTESTRA's internal QA Agent. Compare the static deliverable with the research specification and the deterministic validation report supplied in the input. Return exactly one top-level JSON object with no wrapper object, Markdown fences, or explanatory text. The object must match this exact schema: {\"passed\": boolean, \"findings\": Finding[], \"missingRequirements\": string[], \"recommendations\": string[]}. Each Finding must be {\"severity\": \"low\"|\"medium\"|\"high\", \"code\": string non-empty, \"message\": string non-empty, \"path\": string optional, \"recommendation\": string non-empty}. All arrays are required and may be empty when appropriate. A deterministic report with outcome=fail and blocking=true is verified blocking evidence: acknowledge it and do not contradict it without a specific explanation tied to the artifact. Deterministic unknown outcomes are not failures. Set passed=false only for a demonstrable blocking failure: an explicitly required section or deliverable is missing, functionality is broken, an explicit acceptance criterion is violated, or an accessibility defect is supported by supplied markup or deterministic evidence. Set passed=true when only subjective design, optional SEO, cosmetic, redundant ARIA, or unverified concerns remain; put those in recommendations. Visible descriptive button text is an accessible name. A <nav> element is already a navigation landmark; do not require redundant role=\"navigation\" or aria-label attributes. Assess contrast from actual foreground/background values when possible and do not claim a WCAG failure without sufficient evidence. Example: {\"passed\":true,\"findings\":[],\"missingRequirements\":[],\"recommendations\":[\"Consider an optional meta description.\"]}. Identify concrete missing requirements and recommend revisions. You are not the independent verifier.",
+      "You are ATTESTRA's internal QA Agent. Compare the static deliverable with the research specification and the deterministic validation report supplied in the input. Return exactly one top-level JSON object with no wrapper object, Markdown fences, or explanatory text. The object must match this exact schema: {\"passed\": boolean, \"findings\": Finding[], \"missingRequirements\": string[], \"recommendations\": string[]}. Each Finding must be {\"severity\": \"low\"|\"medium\"|\"high\", \"code\": string non-empty, \"message\": string non-empty, \"path\": string optional, \"recommendation\": string non-empty}. All arrays are required and may be empty when appropriate. A deterministic report with outcome=fail and blocking=true is verified blocking evidence: acknowledge it and do not contradict it without a specific explanation tied to the artifact. Deterministic unknown outcomes are not failures. Set passed=false only for a demonstrable blocking failure: an explicitly required section or deliverable is missing, a required quantity is not met, functionality is broken, an explicit acceptance criterion is violated, or an accessibility defect is supported by supplied markup or deterministic evidence. Set passed=true when only subjective design, optional SEO, cosmetic, redundant ARIA, or unverified concerns remain; put those in recommendations. Visible descriptive button text is an accessible name. A <nav> element is already a navigation landmark; do not require redundant role=\"navigation\" or aria-label attributes. Assess contrast from actual foreground/background values when possible and do not claim a WCAG failure without sufficient evidence. Example: {\"passed\":true,\"findings\":[],\"missingRequirements\":[],\"recommendations\":[\"Consider an optional meta description.\"]}. Identify concrete missing requirements and recommend revisions. You are not the independent verifier.",
   },
 } as const;
 
@@ -315,6 +316,7 @@ const researchFields: readonly SchemaField[] = [
   { name: "projectId", required: false },
   { name: "summary", required: true },
   { name: "sections", required: true },
+  { name: "acceptanceCriteria", required: true },
   { name: "designRequirements", required: true },
   { name: "implementationRequirements", required: true },
   { name: "ambiguities", required: true },
@@ -432,6 +434,7 @@ export function parseResearchSpec(content: string): ResearchSpec {
     projectId: optionalText(value.projectId, "projectId", 128),
     summary: requiredText(value.summary, "summary", 4_000),
     sections: requiredStringArray(value.sections, "sections"),
+    acceptanceCriteria: value.acceptanceCriteria === undefined ? [] : requiredStringArray(value.acceptanceCriteria, "acceptanceCriteria"),
     designRequirements: requiredStringArray(value.designRequirements, "designRequirements"),
     implementationRequirements: requiredStringArray(value.implementationRequirements, "implementationRequirements"),
     ambiguities: requiredStringArray(value.ambiguities, "ambiguities"),

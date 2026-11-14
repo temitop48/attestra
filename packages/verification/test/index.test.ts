@@ -16,6 +16,14 @@ async function request(overrides: Partial<VerificationRequest> = {}): Promise<Ve
 function engine(options: ConstructorParameters<typeof VerificationEngine>[0] = {}) { return new VerificationEngine({ receiptIdFactory: (() => { let n = 0; return () => `receipt-${++n}`; })(), ...options }); }
 
 describe("independent verification", () => {
+  it("enforces quantified card requirements independently", async () => {
+    const cardHtml = html.replace('<section id="features">Features</section>', '<section id="features"><article class="feature-card">One</article><article class="feature-card">Two</article><article class="feature-card">Three</article></section>');
+    const deliverable = await createDeliverableManifest(1, [{ ...artifacts[0]!, content: cardHtml }, artifacts[1]!]);
+    const receipt = await engine().verify({ ...(await request({ criteria: { requiredSections: ["features"], acceptanceCriteria: ["three feature cards"], requireAccessibility: true } })), deliverable, expectedArtifactDigest: deliverable.digest });
+    expect(receipt.checks.find((check) => check.id === "acceptance_0")?.status).toBe("passed");
+    expect(receipt.result).toBe("Passed");
+  });
+
   it.each(["cta", "signup", "get-started"]) ("accepts Call to Action alias %s in independent verification", async (id) => {
     const aliasHtml = html.replace('<section id="features">Features</section>', `<section id="features">Features</section><section id="${id}">Start now</section>`);
     const deliverable = await createDeliverableManifest(1, [{ ...artifacts[0]!, content: aliasHtml }, artifacts[1]!]);
