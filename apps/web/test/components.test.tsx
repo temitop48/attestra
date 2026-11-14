@@ -52,6 +52,11 @@ describe("workspace presentation", () => {
     expect(source).toContain("confirmTransaction");
     expect(source).toContain("recordProjectTransaction");
     expect(source).toContain("recordMilestoneTransaction");
+    expect(source).toContain("Connect owner wallet");
+    expect(source).toContain("executionRecord.paymentEligible ? <div");
+    expect(source).toContain("</div> : null}<div className=\"chain-step\">");
+    expect(source).toContain("Fund project with exactly 0.01 NEAR");
+    expect(source).toContain("Start only after Funded");
   });
 
   it("uses one explicit wallet authentication state model", () => {
