@@ -81,7 +81,7 @@ describe("frontend API client", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ state: "pending", executionId: "exec-1", receiptId: "receipt-1", artifactDigest: "a".repeat(64), transactionHash: "tx-1", submissionMode: "backend-verifier" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await expect(submitBackendVerification("exec-1")).resolves.toMatchObject({ state: "pending", submissionMode: "backend-verifier" });
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/v1/executions/exec-1/chain/submit-verification", expect.objectContaining({ method: "POST", credentials: "include" }));
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/v1/executions/exec-1/chain/submit-verification", expect.objectContaining({ method: "POST", credentials: "include", body: "{}", headers: { "content-type": "application/json" } }));
   });
 
   it("polls until the API reports a completed lifecycle", async () => {
