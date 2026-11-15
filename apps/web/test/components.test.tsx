@@ -69,6 +69,13 @@ describe("workspace presentation", () => {
     expect(source).not.toContain('<strong>Not connected</strong>');
     expect(source).toContain("wallet.authState");
   });
+  it("refreshes payment verification after a rejected-to-passed re-verification", () => {
+    const source = readFileSync(new URL("../src/components/payment-lifecycle-panel.tsx", import.meta.url), "utf8");
+    expect(source).toContain("verificationStatus !== \"in_progress\"");
+    expect(source).toContain("getVerification(executionId).then((latest)");
+    expect(source).toContain("const passingReceipt = verification?.status === \"verified\" && receipt?.result === \"Passed\"");
+    expect(source).toContain("{passingReceipt ? <div className=\"receipt-binding\">");
+  });
   it("keeps the workspace route backed by the existing execution workspace", () => {
     const page = WorkspacePage();
     expect(React.isValidElement(page)).toBe(true);

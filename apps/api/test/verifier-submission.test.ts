@@ -61,6 +61,27 @@ describe("backend verifier submission boundary", () => {
     await expect(service(chainReader()).submit(record)).rejects.toMatchObject({ code: "VERIFIER_VERSION_MISMATCH" });
   });
 
+  it("uses the latest passing attempt after an earlier rejection", async () => {
+    const { record, receipt } = await fixture();
+    const rejected = { ...record.verificationState!, attemptId: "attempt-rejected", status: "rejected" as const, result: "Failed" as const, receipt: { ...receipt, receiptId: "rejected-receipt", result: "Failed" as const } };
+    record.verificationHistory = [rejected, record.verificationState!];
+    const submit = vi.fn(async () => ({ hash: "tx-latest-passing" }));
+    const result = await service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit }).submit(record);
+    expect(result).toMatchObject({ state: "pending", receiptId: receipt.receiptId });
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("never submits a rejected or superseded receipt", async () => {
+    const { record, receipt } = await fixture();
+    const rejected = { ...record.verificationState!, attemptId: "attempt-rejected", status: "rejected" as const, result: "Failed" as const, receipt: { ...receipt, receiptId: "rejected-receipt", result: "Failed" as const } };
+    record.verificationState = rejected;
+    record.verificationHistory = [rejected];
+    record.verification = rejected.receipt;
+    const submit = vi.fn(async () => ({ hash: "should-not-submit" }));
+    await expect(service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit }).submit(record)).rejects.toMatchObject({ code: "PASSING_RECEIPT_REQUIRED" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["project", (record: StoredExecution) => { record.onChainLinkage!.onChainProjectId = "1"; }],
     ["milestone", (record: StoredExecution) => { record.verificationState!.receipt!.milestoneId = "1"; }],
