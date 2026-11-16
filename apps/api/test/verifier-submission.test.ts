@@ -8,7 +8,7 @@ import type { NearMilestone, NearProject, NearTransaction } from "@attestra/near
 import { VERIFIER_IMPLEMENTATION_VERSION, type VerificationReceipt } from "@attestra/verification";
 import { BackendVerifierSubmissionService, VerifierSubmissionError, type VerifierChainReader } from "../src/verifier-submission.js";
 import type { StoredExecution } from "../src/store.js";
-import { VerifierSubmissionStore } from "../src/verifier-submission-store.js";
+import { VerifierSubmissionStore, type PersistedVerifierSubmission, type VerifierSubmissionStoreLike } from "../src/verifier-submission-store.js";
 
 const artifacts: Artifact[] = [
   { path: "index.html", mediaType: "text/html", content: "<html><body>FocusFlow</body></html>" },
@@ -47,6 +47,13 @@ function chainReader(overrides: Partial<VerifierChainReader> = {}): VerifierChai
 
 function service(reader: VerifierChainReader, signer?: { accountId: string; submit: ReturnType<typeof vi.fn> }, submissionStore?: VerifierSubmissionStore) {
   return new BackendVerifierSubmissionService({ reader, signer, authorizedVerifier: "verifier.attestra-owner.testnet", verificationStorageDeposit: "1", submissionStore });
+}
+
+function verifiedReader(record: StoredExecution, digest: string, receiptId: string, overrides: Partial<VerifierChainReader> = {}): VerifierChainReader {
+  return chainReader({
+    getMilestone: vi.fn(async () => ({ projectId: 0, milestoneId: 0, recipient: "recipient.testnet", budget: "10000000000000000000000", dependencies: [], status: "VerificationPassed" as const, verification: { projectId: 0, milestoneId: 0, deliverableDigest: digest, receiptId, result: "Passed" as const, verifier: "verifier.attestra-owner.testnet" } })),
+    ...overrides,
+  });
 }
 
 describe("backend verifier submission boundary", () => {
@@ -119,6 +126,61 @@ describe("backend verifier submission boundary", () => {
     expect(secondSubmit).not.toHaveBeenCalled();
   });
 
+  it("durably preserves a reserved intent if the process stops before signer invocation", async () => {
+    const { record, receipt, digest } = await fixture();
+    const path = join(mkdtempSync(join(tmpdir(), "attestra-verifier-")), "submissions.json");
+    const store = VerifierSubmissionStore.openSync(path);
+    const key = `${record.executionId}:${receipt.receiptId}:${digest}`;
+    await store.reserve(key, { state: "pending", recoveryState: "reserved", executionId: record.executionId, receiptId: receipt.receiptId, artifactDigest: digest, createdAt: new Date(0).toISOString() });
+    const submit = vi.fn(async () => ({ hash: "must-not-submit" }));
+    const result = await service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit }, store).submit(record);
+    expect(result).toMatchObject({ state: "pending", recoveryState: "reserved" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("does not rebroadcast a persisted broadcast attempt with no hash after restart", async () => {
+    const { record, receipt, digest } = await fixture();
+    const path = join(mkdtempSync(join(tmpdir(), "attestra-verifier-")), "submissions.json");
+    const store = VerifierSubmissionStore.openSync(path);
+    const key = `${record.executionId}:${receipt.receiptId}:${digest}`;
+    await store.reserve(key, { state: "pending", recoveryState: "broadcast_attempted", executionId: record.executionId, receiptId: receipt.receiptId, artifactDigest: digest, createdAt: new Date(0).toISOString(), broadcastAttemptedAt: new Date(1).toISOString() });
+    const submit = vi.fn(async () => ({ hash: "duplicate" }));
+    const result = await service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit }, VerifierSubmissionStore.openSync(path)).submit(record);
+    expect(result).toMatchObject({ state: "pending", recoveryState: "broadcast_attempted" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("marks an ambiguous signer timeout unknown and does not retry it", async () => {
+    const { record } = await fixture();
+    const path = join(mkdtempSync(join(tmpdir(), "attestra-verifier-")), "submissions.json");
+    const store = VerifierSubmissionStore.openSync(path);
+    const submit = vi.fn(async () => { throw new Error("network timeout"); });
+    const verifier = service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit }, store);
+    await expect(verifier.submit(record)).rejects.toThrow("network timeout");
+    expect(store.get("exec-1:attest-v4-test:" + (await fixture()).digest)?.recoveryState).toBe("unknown");
+    await expect(verifier.submit(record)).resolves.toMatchObject({ state: "unknown", recoveryState: "unknown" });
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose an unpersisted hash after durable persistence fails", async () => {
+    const { record, receipt, digest } = await fixture();
+    let persisted: PersistedVerifierSubmission | undefined;
+    let failHashPersistence = true;
+    const store: VerifierSubmissionStoreLike = {
+      get: () => persisted,
+      reserve: async (idempotencyKey, initial) => { if (persisted) return { created: false, submission: persisted }; persisted = { ...initial, idempotencyKey }; return { created: true, submission: persisted }; },
+      update: async (_idempotencyKey, patch) => { if (failHashPersistence && (patch.recoveryState === "transaction_known" || patch.recoveryState === "unknown")) throw new Error("database unavailable"); persisted = { ...persisted!, ...patch }; return persisted; },
+      markUnknown: async (idempotencyKey, error) => { persisted = { ...persisted!, idempotencyKey, state: "unknown", recoveryState: "unknown", error }; return persisted; },
+    };
+    const submit = vi.fn(async () => ({ hash: "tx-not-persisted" }));
+    const verifier = service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit }, store);
+    await expect(verifier.submit(record)).rejects.toThrow("database unavailable");
+    failHashPersistence = false;
+    await expect(verifier.submit(record)).resolves.toMatchObject({ state: "pending", recoveryState: "broadcast_attempted" });
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(persisted?.transactionHash).toBeUndefined();
+  });
+
   it("requires the signer account to equal the contract authorized verifier", async () => {
     const { record } = await fixture();
     await expect(service(chainReader(), { accountId: "owner.testnet", submit: vi.fn() }).submit(record)).rejects.toMatchObject({ code: "VERIFIER_SIGNER_MISMATCH" });
@@ -133,10 +195,60 @@ describe("backend verifier submission boundary", () => {
     expect(result.state).toBe("finalized");
   });
 
+  it("persists successful known-hash reconciliation", async () => {
+    const { record, receipt, digest } = await fixture();
+    const path = join(mkdtempSync(join(tmpdir(), "attestra-verifier-")), "submissions.json");
+    const store = VerifierSubmissionStore.openSync(path);
+    const submit = vi.fn(async () => ({ hash: "tx-known" }));
+    const reader = verifiedReader(record, digest, receipt.receiptId, { getTransaction: vi.fn(async () => ({ hash: "tx-known", signerId: "verifier.attestra-owner.testnet", receiverId: "escrow.attestra-owner.testnet", finalExecutionStatus: "FINAL", status: {}, success: true, actions: [{ type: "FunctionCall", methodName: "submit_verification", argsBase64: Buffer.from(JSON.stringify({ project_id: 0, milestone_id: 0, deliverable_digest: digest, receipt_id: receipt.receiptId, result: "Passed" })).toString("base64"), deposit: "1" }] })) });
+    await service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit }, store).submit(record);
+    await expect(service(reader, undefined, store).reconcile(record, "tx-known")).resolves.toMatchObject({ state: "finalized", recoveryState: "finalized", transactionHash: "tx-known" });
+    expect(store.get("exec-1:attest-v4-test:" + digest)).toMatchObject({ state: "finalized", recoveryState: "finalized", transactionHash: "tx-known" });
+  });
+
+  it("persists a known-hash on-chain failure as definitive failure", async () => {
+    const { record, receipt, digest } = await fixture();
+    const path = join(mkdtempSync(join(tmpdir(), "attestra-verifier-")), "submissions.json");
+    const store = VerifierSubmissionStore.openSync(path);
+    const tx = { hash: "tx-failed", signerId: "verifier.attestra-owner.testnet", receiverId: "escrow.attestra-owner.testnet", finalExecutionStatus: "FINAL", status: {}, success: false, actions: [{ type: "FunctionCall" as const, methodName: "submit_verification" as const, argsBase64: Buffer.from(JSON.stringify({ project_id: 0, milestone_id: 0, deliverable_digest: digest, receipt_id: receipt.receiptId, result: "Passed" })).toString("base64"), deposit: "1" }] };
+    const reader = chainReader({ getTransaction: vi.fn(async () => tx) });
+    await service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit: vi.fn(async () => ({ hash: "tx-failed" })) }, store).submit(record);
+    await expect(service(verifiedReader(record, digest, receipt.receiptId, { getTransaction: vi.fn(async () => tx) }), undefined, store).reconcile(record, "tx-failed")).resolves.toMatchObject({ state: "failed", recoveryState: "definitive_failure" });
+  });
+
+  it("finalizes matching on-chain receipt state without fabricating a hash", async () => {
+    const { record, receipt, digest } = await fixture();
+    const path = join(mkdtempSync(join(tmpdir(), "attestra-verifier-")), "submissions.json");
+    const store = VerifierSubmissionStore.openSync(path);
+    await service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit: vi.fn(async () => ({ hash: "never-used" })) }, store).submit(record);
+    const result = await service(verifiedReader(record, digest, receipt.receiptId), undefined, store).reconcile(record);
+    expect(result).toMatchObject({ state: "finalized", recoveryState: "receipt_confirmed_without_hash" });
+    expect(result.transactionHash).toBeUndefined();
+  });
+
+  it("persists unknown reconciliation and remains safe on repeated attempts", async () => {
+    const { record, receipt, digest } = await fixture();
+    const path = join(mkdtempSync(join(tmpdir(), "attestra-verifier-")), "submissions.json");
+    const store = VerifierSubmissionStore.openSync(path);
+    const submit = vi.fn(async () => ({ hash: "tx-unknown" }));
+    const reader = verifiedReader(record, digest, receipt.receiptId, { getTransaction: vi.fn(async () => ({ hash: "tx-unknown", signerId: "verifier.attestra-owner.testnet", receiverId: "escrow.attestra-owner.testnet", finalExecutionStatus: "FINAL", status: {}, success: true, actions: [] })) });
+    await service(chainReader(), { accountId: "verifier.attestra-owner.testnet", submit }, store).submit(record);
+    await expect(service(reader, undefined, store).reconcile(record, "tx-unknown")).resolves.toMatchObject({ state: "unknown", recoveryState: "unknown" });
+    await expect(service(reader, undefined, store).reconcile(record, "tx-unknown")).resolves.toMatchObject({ state: "unknown", recoveryState: "unknown" });
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
   it("returns unknown for a successful transaction with tampered arguments", async () => {
     const { record, receipt, digest } = await fixture();
     const tx: NearTransaction = { hash: "tx-2", signerId: "verifier.attestra-owner.testnet", receiverId: "escrow.attestra-owner.testnet", finalExecutionStatus: "FINAL", status: {}, success: true, actions: [{ type: "FunctionCall", methodName: "submit_verification", argsBase64: Buffer.from(JSON.stringify({ project_id: 9, milestone_id: 0, deliverable_digest: receipt.artifactDigest, receipt_id: receipt.receiptId, result: "Passed" })).toString("base64"), deposit: "1" }] };
     const result = await service(chainReader({ getTransaction: vi.fn(async () => tx), getMilestone: vi.fn(async () => ({ projectId: 0, milestoneId: 0, recipient: "recipient.testnet", budget: "10000000000000000000000", dependencies: [], status: "VerificationPassed" as const, verification: { projectId: 0, milestoneId: 0, deliverableDigest: digest, receiptId: receipt.receiptId, result: "Passed" as const, verifier: "verifier.attestra-owner.testnet" } })) })).reconcile(record, "tx-2");
     expect(result.state).toBe("unknown");
+  });
+
+  it("rejects a known transaction that is not at FINAL execution status", async () => {
+    const { record, receipt, digest } = await fixture();
+    const tx: NearTransaction = { hash: "tx-not-final", signerId: "verifier.attestra-owner.testnet", receiverId: "escrow.attestra-owner.testnet", finalExecutionStatus: "EXECUTED", status: {}, success: true, actions: [{ type: "FunctionCall", methodName: "submit_verification", argsBase64: Buffer.from(JSON.stringify({ project_id: 0, milestone_id: 0, deliverable_digest: digest, receipt_id: receipt.receiptId, result: "Passed" })).toString("base64"), deposit: "1" }] };
+    const result = await service(chainReader({ getTransaction: vi.fn(async () => tx), getMilestone: vi.fn(async () => ({ projectId: 0, milestoneId: 0, recipient: "recipient.testnet", budget: "10000000000000000000000", dependencies: [], status: "VerificationPassed" as const, verification: { projectId: 0, milestoneId: 0, deliverableDigest: digest, receiptId: receipt.receiptId, result: "Passed" as const, verifier: "verifier.attestra-owner.testnet" } })) })).reconcile(record, "tx-not-final");
+    expect(result).toMatchObject({ state: "unknown", recoveryState: "unknown" });
   });
 });

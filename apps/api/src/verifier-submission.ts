@@ -1,8 +1,9 @@
 import { computeArtifactDigest } from "@attestra/orchestrator";
+import { createHash } from "node:crypto";
 import { VERIFIER_IMPLEMENTATION_VERSION, toContractVerificationArgs, type VerificationReceipt } from "@attestra/verification";
 import type { NearMilestone, NearProject, NearTransaction } from "@attestra/near-readonly";
 import type { OnChainLinkage, StoredExecution, VerificationAttempt } from "./store.js";
-import type { VerifierSubmissionStoreLike } from "./verifier-submission-store.js";
+import type { VerifierSubmissionStoreLike, VerifierSubmissionPatch } from "./verifier-submission-store.js";
 
 export type VerifierChainReader = {
   readonly network: "testnet";
@@ -28,11 +29,17 @@ export type BackendVerifierSigner = {
 };
 
 export type VerifierSubmissionState = "pending" | "finalized" | "failed" | "unknown";
-export type VerifierSubmission = { state: VerifierSubmissionState; executionId: string; receiptId: string; artifactDigest: string; transactionHash?: string; error?: string };
+export type VerifierRecoveryState = "reserved" | "broadcast_attempted" | "transaction_known" | "finalized" | "definitive_failure" | "unknown" | "receipt_confirmed_without_hash";
+export type VerifierIntentMetadata = { executionId: string; receiptId: string; artifactDigest: string; projectId: number; milestoneId: number; signerAccount: string; escrowContractAccount: string; method: "submit_verification"; args: VerifierTransactionIntent["args"]; deposit: string; intentDigest: string };
+export type VerifierSubmission = { state: VerifierSubmissionState; executionId: string; receiptId: string; artifactDigest: string; transactionHash?: string; error?: string; recoveryState?: VerifierRecoveryState };
 
-function publicSubmission(value: { state: VerifierSubmissionState; executionId: string; receiptId: string; artifactDigest: string; transactionHash?: string; error?: string }): VerifierSubmission {
-  const { state, executionId, receiptId, artifactDigest, transactionHash, error } = value;
-  return { state, executionId, receiptId, artifactDigest, ...(transactionHash ? { transactionHash } : {}), ...(error ? { error } : {}) };
+function publicSubmission(value: VerifierSubmission): VerifierSubmission {
+  const { state, executionId, receiptId, artifactDigest, transactionHash, error, recoveryState } = value;
+  return { state, executionId, receiptId, artifactDigest, ...(transactionHash ? { transactionHash } : {}), ...(error ? { error } : {}), ...(recoveryState ? { recoveryState } : {}) };
+}
+
+function intentDigest(intent: VerifierTransactionIntent): string {
+  return createHash("sha256").update(JSON.stringify({ receiverId: intent.receiverId, methodName: intent.methodName, args: intent.args, gas: intent.gas, deposit: intent.deposit, idempotencyKey: intent.idempotencyKey })).digest("hex");
 }
 
 export class VerifierSubmissionError extends Error {
@@ -98,49 +105,68 @@ export class BackendVerifierSubmissionService {
     if (active) return active;
     if (!this.options.signer) throw new VerifierSubmissionError("VERIFIER_SIGNER_NOT_CONFIGURED", "A server-side verifier signer is not configured; no transaction was submitted");
     if (this.options.signer.accountId !== this.options.authorizedVerifier) throw new VerifierSubmissionError("VERIFIER_SIGNER_MISMATCH", "The configured signer is not the contract authorized verifier");
-    const reservation = this.options.submissionStore ? await this.options.submissionStore.reserve(prepared.key, { state: "pending", executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest }) : { created: true, submission: undefined };
+    const now = new Date().toISOString();
+    const intent: VerifierIntentMetadata = { executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, projectId: prepared.projectId, milestoneId: prepared.milestoneId, signerAccount: this.options.signer.accountId, escrowContractAccount: prepared.intent.receiverId, method: prepared.intent.methodName, args: prepared.intent.args, deposit: prepared.intent.deposit, intentDigest: intentDigest(prepared.intent) };
+    const reservation = this.options.submissionStore ? await this.options.submissionStore.reserve(prepared.key, { state: "pending", recoveryState: "reserved", executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, intent, createdAt: now }) : { created: true, submission: undefined };
     if (!reservation.created && reservation.submission) return publicSubmission(reservation.submission);
-    const operation = this.options.signer.submit(prepared.intent).then(async ({ hash }) => {
+    const operation = (async () => {
+      await this.options.submissionStore?.update(prepared.key, { recoveryState: "broadcast_attempted", broadcastAttemptedAt: new Date().toISOString() });
+      return this.options.signer!.submit(prepared.intent);
+    })().then(async ({ hash }) => {
       if (!hash) throw new VerifierSubmissionError("SIGNER_INVALID_RESULT", "Verifier signer returned no transaction hash");
-      const pending: VerifierSubmission = { state: "pending", executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, transactionHash: hash };
-      this.states.set(prepared.key, pending);
+      const pending: VerifierSubmission = { state: "pending", recoveryState: "transaction_known", executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, transactionHash: hash };
       await this.options.submissionStore?.update(prepared.key, pending);
+      this.states.set(prepared.key, pending);
       return pending;
     }).catch(async (error) => {
       const outcome = error && typeof error === "object" && "submissionOutcome" in error ? (error as { submissionOutcome?: string }).submissionOutcome : undefined;
-      const state = outcome === "failed" ? "failed" : "unknown";
-      const failure: VerifierSubmission = { state, executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, error: error instanceof Error ? error.message : "Verifier submission outcome is unknown" };
+      const definitive = outcome === "failed";
+      const state = definitive ? "failed" : "unknown";
+      const recoveryState = definitive ? "definitive_failure" : "unknown";
+      const failure: VerifierSubmission = { state, recoveryState, executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, error: error instanceof Error ? error.message : "Verifier submission outcome is unknown" };
+      await this.options.submissionStore?.update(prepared.key, { state, recoveryState, error: failure.error ?? "Verifier submission failed" });
       this.states.set(prepared.key, failure);
-      await this.options.submissionStore?.update(prepared.key, { state, error: failure.error ?? "Verifier submission failed" });
       throw error;
     }).finally(() => this.inFlight.delete(prepared.key));
     this.inFlight.set(prepared.key, operation);
     return operation;
   }
 
-  async reconcile(record: StoredExecution, transactionHash: string): Promise<VerifierSubmission> {
-    const prepared = await this.prepare(record, "VerificationPassed", true);
-    const tx = await this.options.reader.getTransaction(transactionHash, this.options.authorizedVerifier);
-    const action = tx.actions[0];
-    const args = decodeIntentArgs(action?.argsBase64);
-    if (!tx.success || tx.signerId !== this.options.authorizedVerifier || tx.receiverId !== this.options.reader.contractAccountId || tx.actions.length !== 1 || action?.type !== "FunctionCall" || action.methodName !== "submit_verification" || action.deposit !== this.options.verificationStorageDeposit || !args || JSON.stringify(args) !== JSON.stringify(prepared.intent.args)) return { state: "unknown", executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, transactionHash, error: "Finalized transaction evidence does not match the verifier intent" };
+  async reconcile(record: StoredExecution, transactionHash?: string): Promise<VerifierSubmission> {
+    const prepared = await this.prepare(record, ["InProgress", "VerificationPassed"], true);
+    const existing = this.options.submissionStore?.get(prepared.key);
+    if (existing?.state === "finalized") return publicSubmission(existing);
+    const base = { executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest };
+    if (transactionHash) {
+      const tx = await this.options.reader.getTransaction(transactionHash, this.options.authorizedVerifier);
+      const action = tx.actions[0];
+      const args = decodeIntentArgs(action?.argsBase64);
+      const matchesIntent = tx.signerId === this.options.authorizedVerifier && tx.receiverId === this.options.reader.contractAccountId && tx.actions.length === 1 && action?.type === "FunctionCall" && action.methodName === "submit_verification" && action.deposit === this.options.verificationStorageDeposit && !!args && JSON.stringify(args) === JSON.stringify(prepared.intent.args);
+      if (!matchesIntent) return this.persistReconciliation(prepared.key, { ...base, state: "unknown", recoveryState: "unknown", transactionHash, error: "Finalized transaction evidence does not match the verifier intent" });
+      if (tx.finalExecutionStatus !== "FINAL") return this.persistReconciliation(prepared.key, { ...base, state: "unknown", recoveryState: "unknown", transactionHash, error: "Verifier transaction has not reached FINAL execution status" });
+      if (!tx.success) return this.persistReconciliation(prepared.key, { ...base, state: "failed", recoveryState: "definitive_failure", transactionHash, error: "The known verifier transaction failed on-chain" });
+    }
     const project = await this.options.reader.getProject(prepared.projectId);
     const milestone = await this.options.reader.getMilestone(prepared.projectId, prepared.milestoneId);
-    if (!project || !milestone || milestone.status !== "VerificationPassed" || !milestone.verification || milestone.verification.receiptId !== prepared.receipt.receiptId || milestone.verification.deliverableDigest !== prepared.receipt.artifactDigest || milestone.verification.projectId !== prepared.projectId || milestone.verification.milestoneId !== prepared.milestoneId || milestone.verification.verifier !== this.options.authorizedVerifier) return { state: "unknown", executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, transactionHash, error: "Finalized chain state does not confirm this verification" };
-    const finalized: VerifierSubmission = { state: "finalized", executionId: record.executionId, receiptId: prepared.receipt.receiptId, artifactDigest: prepared.receipt.artifactDigest, transactionHash };
-    this.states.set(prepared.key, finalized);
-    await this.options.submissionStore?.update(prepared.key, finalized);
-    return finalized;
+    if (!project || !milestone || milestone.status !== "VerificationPassed" || !milestone.verification || milestone.verification.receiptId !== prepared.receipt.receiptId || milestone.verification.deliverableDigest !== prepared.receipt.artifactDigest || milestone.verification.projectId !== prepared.projectId || milestone.verification.milestoneId !== prepared.milestoneId || milestone.verification.verifier !== this.options.authorizedVerifier || milestone.verification.result !== "Passed") return this.persistReconciliation(prepared.key, { ...base, state: "unknown", recoveryState: "unknown", ...(transactionHash ? { transactionHash } : {}), error: "Finalized chain state does not confirm this verification" });
+    return this.persistReconciliation(prepared.key, { ...base, state: "finalized", recoveryState: transactionHash ? "finalized" : "receipt_confirmed_without_hash", ...(transactionHash ? { transactionHash } : {}) });
   }
 
-  private async prepare(record: StoredExecution, expectedStatus: "InProgress" | "VerificationPassed", allowExistingVerification = false): Promise<{ key: string; receipt: VerificationReceipt; projectId: number; milestoneId: number; intent: VerifierTransactionIntent }> {
+  private async persistReconciliation(key: string, value: VerifierSubmission): Promise<VerifierSubmission> {
+    await this.options.submissionStore?.update(key, value as VerifierSubmissionPatch);
+    this.states.set(key, value);
+    return value;
+  }
+
+  private async prepare(record: StoredExecution, expectedStatus: "InProgress" | "VerificationPassed" | ("InProgress" | "VerificationPassed")[], allowExistingVerification = false): Promise<{ key: string; receipt: VerificationReceipt; projectId: number; milestoneId: number; intent: VerifierTransactionIntent }> {
     const linkage = requireLinkage(record);
     if (linkage.contractAccountId !== this.options.reader.contractAccountId) throw new VerifierSubmissionError("CONTRACT_MISMATCH", "The configured reader does not match the authoritative contract linkage");
     if (linkage.verificationTransactionHash && !allowExistingVerification) throw new VerifierSubmissionError("DUPLICATE_SUBMISSION", "Verification is already linked to this execution");
     const projectId = numericId(linkage.onChainProjectId, "on-chain project ID");
     const milestoneId = numericId(linkage.onChainMilestoneId, "on-chain milestone ID");
     const [project, milestone] = await Promise.all([this.options.reader.getProject(projectId), this.options.reader.getMilestone(projectId, milestoneId)]);
-    if (!project || !milestone || project.projectId !== projectId || milestone.projectId !== projectId || milestone.milestoneId !== milestoneId || project.owner !== linkage.ownerAccountId || milestone.recipient !== linkage.recipientAccountId || milestone.budget !== linkage.milestoneBudget || milestone.status !== expectedStatus) throw new VerifierSubmissionError("CHAIN_STATE_MISMATCH", "Finalized chain state does not match the payment-backed execution");
+    const allowedStatuses = Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus];
+    if (!project || !milestone || project.projectId !== projectId || milestone.projectId !== projectId || milestone.milestoneId !== milestoneId || project.owner !== linkage.ownerAccountId || milestone.recipient !== linkage.recipientAccountId || milestone.budget !== linkage.milestoneBudget || !allowedStatuses.includes(milestone.status as "InProgress" | "VerificationPassed")) throw new VerifierSubmissionError("CHAIN_STATE_MISMATCH", "Finalized chain state does not match the payment-backed execution");
     const { attempt, receipt } = latestPassingAttempt(record);
     const final = record.finalDeliverable;
     if (!final || final.revision !== attempt.revision || final.digest !== attempt.artifactDigest || receipt.projectId !== String(projectId) || receipt.milestoneId !== String(milestoneId) || receipt.artifactDigest !== final.digest || await computeArtifactDigest(final.artifacts) !== final.digest) throw new VerifierSubmissionError("RECEIPT_BINDING_INVALID", "The passing receipt does not match the immutable final artifact and chain linkage");

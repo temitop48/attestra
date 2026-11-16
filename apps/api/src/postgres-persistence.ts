@@ -1,7 +1,7 @@
 import { Pool, type PoolClient } from "pg";
 import type { NearReadonlyAdapter } from "@attestra/near-readonly";
 import { normalizeRecord, type ExecutionStoreLike, type OnChainLinkage, type StoredExecution } from "./store.js";
-import type { PersistedVerifierSubmission, VerifierSubmissionStoreLike } from "./verifier-submission-store.js";
+import { applyVerifierSubmissionPatch, normalizeVerifierRecoveryState, VerifierSubmissionConflictError, type PersistedVerifierSubmission, type VerifierSubmissionPatch, type VerifierSubmissionStoreLike } from "./verifier-submission-store.js";
 import type { VerifierSubmission, VerifierSubmissionState } from "./verifier-submission.js";
 
 const MAX_RECORDS = 1_000;
@@ -115,7 +115,7 @@ export class PostgresExecutionStore implements ExecutionStoreLike {
 export class PostgresVerifierSubmissionStore implements VerifierSubmissionStoreLike {
   private readonly records = new Map<string, PersistedVerifierSubmission>();
   private constructor(private readonly pool: Pool) {}
-  static async open(pool: Pool): Promise<PostgresVerifierSubmissionStore> { const store = new PostgresVerifierSubmissionStore(pool); const result = await pool.query<{ record: PersistedVerifierSubmission }>("select record from attest_verifier_submissions"); for (const row of result.rows) store.records.set(row.record.idempotencyKey, row.record); return store; }
+  static async open(pool: Pool): Promise<PostgresVerifierSubmissionStore> { const store = new PostgresVerifierSubmissionStore(pool); const result = await pool.query<{ record: PersistedVerifierSubmission }>("select record from attest_verifier_submissions"); for (const row of result.rows) store.records.set(row.record.idempotencyKey, { ...row.record, recoveryState: normalizeVerifierRecoveryState(row.record), revision: row.record.revision ?? 0 }); return store; }
   get(idempotencyKey: string): PersistedVerifierSubmission | undefined { return this.records.get(idempotencyKey); }
   async reserve(idempotencyKey: string, initial: Omit<PersistedVerifierSubmission, "idempotencyKey">): Promise<{ created: boolean; submission: PersistedVerifierSubmission }> {
     const submission = { ...initial, idempotencyKey };
@@ -123,10 +123,33 @@ export class PostgresVerifierSubmissionStore implements VerifierSubmissionStoreL
     if (result.rowCount) { this.records.set(idempotencyKey, submission); return { created: true, submission }; }
     const existing = this.records.get(idempotencyKey) ?? (await this.pool.query<{ record: PersistedVerifierSubmission }>("select record from attest_verifier_submissions where idempotency_key = $1", [idempotencyKey])).rows[0]?.record;
     if (!existing) throw new Error("Verifier submission reservation could not be read after conflict");
-    this.records.set(idempotencyKey, existing); return { created: false, submission: existing };
+    const normalized = { ...existing, recoveryState: normalizeVerifierRecoveryState(existing), revision: existing.revision ?? 0 };
+    this.records.set(idempotencyKey, normalized); return { created: false, submission: normalized };
   }
-  async update(idempotencyKey: string, patch: Partial<Pick<PersistedVerifierSubmission, "state" | "transactionHash" | "error">>): Promise<PersistedVerifierSubmission> { const current = this.records.get(idempotencyKey) ?? (await this.pool.query<{ record: PersistedVerifierSubmission }>("select record from attest_verifier_submissions where idempotency_key = $1", [idempotencyKey])).rows[0]?.record; if (!current) throw new Error("Verifier submission reservation not found"); const next = { ...current, ...patch }; await this.pool.query("update attest_verifier_submissions set record = $2::jsonb, updated_at = now() where idempotency_key = $1", [idempotencyKey, JSON.stringify(next)]); this.records.set(idempotencyKey, next); return next; }
-  async markUnknown(idempotencyKey: string, error: string): Promise<PersistedVerifierSubmission> { return this.update(idempotencyKey, { state: "unknown" satisfies VerifierSubmissionState, error }); }
+  async update(idempotencyKey: string, patch: VerifierSubmissionPatch): Promise<PersistedVerifierSubmission> {
+    const cached = this.records.get(idempotencyKey);
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const result = await client.query<{ record: PersistedVerifierSubmission }>("select record from attest_verifier_submissions where idempotency_key = $1 for update", [idempotencyKey]);
+      const persisted = result.rows[0]?.record;
+      if (!persisted) throw new Error("Verifier submission reservation not found");
+      const current = { ...persisted, recoveryState: normalizeVerifierRecoveryState(persisted), revision: persisted.revision ?? 0 };
+      if (cached && (cached.revision ?? 0) !== current.revision) {
+        this.records.set(idempotencyKey, current);
+        throw new VerifierSubmissionConflictError();
+      }
+      const next = { ...applyVerifierSubmissionPatch(current, patch), revision: current.revision + 1 };
+      await client.query("update attest_verifier_submissions set record = $2::jsonb, updated_at = now() where idempotency_key = $1", [idempotencyKey, JSON.stringify(next)]);
+      await client.query("commit");
+      this.records.set(idempotencyKey, next);
+      return next;
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
+  async markUnknown(idempotencyKey: string, error: string): Promise<PersistedVerifierSubmission> { return this.update(idempotencyKey, { state: "unknown" satisfies VerifierSubmissionState, recoveryState: "unknown", error }); }
   async close(): Promise<void> { await this.pool.end(); }
 }
 
